@@ -1,0 +1,86 @@
+services:
+  # ============================================================
+  # Nginx — 反向代理 + 前端开发代理
+  # ============================================================
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ============================================================
+  # FastAPI — 后端 API Server
+  # ============================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-8001}:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-deepresearch}:${POSTGRES_PASSWORD:-deepresearch}@db:5432/${POSTGRES_DB:-deepresearch}
+    volumes:
+      - ./src:/app/src:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+      - ./alembic:/app/alembic:ro
+      - ./tests:/app/tests:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================
+  # PostgreSQL 16 — 数据库
+  # ============================================================
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-deepresearch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deepresearch}
+      POSTGRES_DB: ${POSTGRES_DB:-deepresearch}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deepresearch} -d ${POSTGRES_DB:-deepresearch}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ============================================================
+  # Brave Search MCP Server — Web 搜索数据源
+  # 通过 npx @brave/brave-search-mcp-server 运行，HTTP transport 模式
+  # FastAPI 通过 MCP client (mcp SDK) 连接: http://brave-mcp:3000
+  # ============================================================
+  brave-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.brave-mcp
+      args:
+        BRAVE_API_KEY: ${BRAVE_API_KEY}
+    ports:
+      - "${BRAVE_MCP_PORT:-3000}:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  pgdata:

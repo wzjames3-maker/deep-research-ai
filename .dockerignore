@@ -1,0 +1,39 @@
+# Secrets / env
+.env
+src/**/*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (frontend — when built)
+node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# Docker
+Dockerfile*
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Alembic (version files managed in repo, not excluded)
+# alembic/versions/ are tracked
