@@ -37,25 +37,27 @@ def mock_mcp_client():
 def mock_llm_service():
     """Mock LLM service."""
     service = MagicMock()
-    service.generate_plan = AsyncMock(return_value={
-        "subAgents": [
+    service.generate_plan = AsyncMock(return_value=(
+        [
             {"name": "Agent1", "goal": "Goal 1", "searchDirection": "query 1"},
             {"name": "Agent2", "goal": "Goal 2", "searchDirection": "query 2"},
             {"name": "Agent3", "goal": "Goal 3", "searchDirection": "query 3"},
-        ]
-    })
-    service.revise_plan = AsyncMock(return_value={
-        "subAgents": [
+        ],
+        100,  # tokens
+    ))
+    service.revise_plan = AsyncMock(return_value=(
+        [
             {"name": "Agent1", "goal": "Goal 1 revised", "searchDirection": "query 1 revised"},
             {"name": "Agent2", "goal": "Goal 2", "searchDirection": "query 2"},
             {"name": "Agent3", "goal": "Goal 3", "searchDirection": "query 3"},
             {"name": "Agent4", "goal": "Goal 4", "searchDirection": "query 4"},
-        ]
-    })
-    service.aggregate_report = AsyncMock(return_value={
-        "report_markdown": "# Test Report\n\nAggregated findings.",
-        "total_tokens": 500,
-    })
+        ],
+        150,  # tokens
+    ))
+    service.aggregate_report = AsyncMock(return_value=(
+        "# Test Report\n\nAggregated findings.",
+        500,  # tokens
+    ))
     service.sub_agent_search = AsyncMock(return_value={
         "sufficient": True,
         "findings": "Test findings",
@@ -67,10 +69,43 @@ def mock_llm_service():
 
 @pytest.fixture
 def mock_db_session_factory():
-    """Mock DB session factory."""
+    """Mock DB session factory that returns an async context manager."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.models.research import Research
+    from uuid import uuid4
+    
     factory = MagicMock()
     session = AsyncMock()
-    factory.return_value = session
+    
+    # Track added objects to set their IDs
+    added_objects = []
+    
+    def mock_add(obj):
+        added_objects.append(obj)
+    session.add = mock_add
+    
+    # Mock the execute method to return None for find_by_id queries
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_result.scalar_one.return_value = 0
+    session.execute = AsyncMock(return_value=mock_result)
+    
+    # Mock flush to set IDs on added objects
+    async def mock_flush():
+        for obj in added_objects:
+            if hasattr(obj, 'id') and obj.id is None:
+                obj.id = uuid4()
+    session.flush = mock_flush
+    
+    # Mock commit
+    session.commit = AsyncMock()
+    
+    # Make it work as async context manager
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=session)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    factory.return_value = cm
+    
     return factory
 
 
@@ -114,7 +149,7 @@ async def test_plan_generation_to_interrupt(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -143,7 +178,7 @@ async def test_resume_with_confirm(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -177,7 +212,7 @@ async def test_resume_with_revise(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -212,7 +247,7 @@ async def test_resume_revise_then_confirm(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -252,7 +287,7 @@ async def test_send_api_parallel(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -282,14 +317,14 @@ async def test_check_cancel_routes_to_partial_aggregate(
     """cancel_requested=True should route to partial_aggregate."""
     from src.services.research_graph import compile_research_graph
 
-    mock_llm_service.aggregate_report = AsyncMock(return_value={
-        "report_markdown": "# Partial Report\n\nBased on partial results.",
-        "total_tokens": 200,
-    })
+    mock_llm_service.aggregate_report = AsyncMock(return_value=(
+        "# Partial Report\n\nBased on partial results.",
+        200,
+    ))
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -316,7 +351,7 @@ async def test_check_cancel_normal_routes_to_aggregate(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -354,7 +389,7 @@ async def test_all_sub_agents_failed(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -393,7 +428,7 @@ async def test_partial_failure_aggregate(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -426,7 +461,7 @@ async def test_checkpoint_recovery(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -442,7 +477,7 @@ async def test_checkpoint_recovery(
     # Simulate "crash" by creating a new graph instance with same checkpointer
     graph2 = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -466,7 +501,7 @@ async def test_state_reducer_accumulates(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -502,7 +537,7 @@ async def test_cancel_requested_persisted_in_checkpoint(
 
     graph = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )
@@ -520,7 +555,7 @@ async def test_cancel_requested_persisted_in_checkpoint(
     # Create new graph instance (simulating crash recovery)
     graph2 = compile_research_graph(
         mcp_client=mock_mcp_client,
-        llm_service=mock_llm_service,
+        llm_service_override=mock_llm_service,
         db_session_factory=mock_db_session_factory,
         checkpointer=checkpointer,
     )

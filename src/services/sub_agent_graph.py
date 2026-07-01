@@ -36,8 +36,9 @@ _llm_service_override: Any = None
 def get_mcp_client() -> MCPSearchClient:
     """Get or create the MCP client singleton."""
     global _mcp_client
-    if _mcp_client is None:
-        _mcp_client = MCPSearchClient(settings.BRAVE_MCP_URL)
+    if _mcp_client is not None:
+        return _mcp_client
+    _mcp_client = MCPSearchClient(settings.BRAVE_MCP_URL)
     return _mcp_client
 
 
