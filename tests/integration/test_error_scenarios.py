@@ -14,23 +14,19 @@ class TestParamValidation:
     @pytest.mark.asyncio
     async def test_empty_topic_400(self, async_client, auth_headers):
         """空 topic → 400."""
-        with patch("src.api.research.service_plan.llm_service.generate_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 500)):
-            r = await async_client.post("/api/v1/research/new", json={
-                "topic": "",
-                "template": "tech_research",
-            }, headers=auth_headers)
+        r = await async_client.post("/api/v1/research/new", json={
+            "topic": "",
+            "template": "tech_research",
+        }, headers=auth_headers)
         assert r.status_code == 400
 
     @pytest.mark.asyncio
     async def test_invalid_template_400(self, async_client, auth_headers):
         """无效 template → 400/422."""
-        with patch("src.api.research.service_plan.llm_service.generate_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 500)):
-            r = await async_client.post("/api/v1/research/new", json={
-                "topic": "AI 趋势",
-                "template": "not_a_valid_template",
-            }, headers=auth_headers)
+        r = await async_client.post("/api/v1/research/new", json={
+            "topic": "AI 趋势",
+            "template": "not_a_valid_template",
+        }, headers=auth_headers)
         assert r.status_code in (400, 422)
 
     @pytest.mark.asyncio
@@ -128,14 +124,12 @@ class TestStatusTransition:
     """状态转换异常."""
 
     @pytest.mark.asyncio
-    async def test_concurrent_research_409(self, async_client, auth_headers):
+    async def test_concurrent_research_409(self, async_client, auth_headers, mock_llm_for_graph):
         """并发保护: 已有 running 研究时新建 → 409."""
         # 创建并确认第一个研究
-        with patch("src.api.research.service_plan.llm_service.generate_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 500)):
-            r1 = await async_client.post("/api/v1/research/new", json={
-                "topic": "第一个研究", "template": "tech_research",
-            }, headers=auth_headers)
+        r1 = await async_client.post("/api/v1/research/new", json={
+            "topic": "第一个研究", "template": "tech_research",
+        }, headers=auth_headers)
         assert r1.status_code == 201
         rid = r1.json()["researchId"]
 
@@ -145,11 +139,9 @@ class TestStatusTransition:
         assert rc.status_code == 200
 
         # 第二个研究 → 409
-        with patch("src.api.research.service_plan.llm_service.generate_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 500)):
-            r2 = await async_client.post("/api/v1/research/new", json={
-                "topic": "第二个研究", "template": "tech_research",
-            }, headers=auth_headers)
+        r2 = await async_client.post("/api/v1/research/new", json={
+            "topic": "第二个研究", "template": "tech_research",
+        }, headers=auth_headers)
         assert r2.status_code == 409
         assert r2.json()["code"] == "RESEARCH_IN_PROGRESS"
 
@@ -193,13 +185,11 @@ class TestStatusTransition:
             )
 
         # Revise → should fail
-        with patch("src.api.research.service_plan.llm_service.revise_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 200)):
-            r = await async_client.post(
-                f"/api/v1/research/{research_id}/plan/revise",
-                json={"feedback": "test"},
-                headers=auth_headers,
-            )
+        r = await async_client.post(
+            f"/api/v1/research/{research_id}/plan/revise",
+            json={"feedback": "test"},
+            headers=auth_headers,
+        )
         assert r.status_code == 400
 
 

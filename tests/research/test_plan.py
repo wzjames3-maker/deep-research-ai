@@ -1,5 +1,6 @@
 import json
 from unittest.mock import patch, AsyncMock
+from uuid import uuid4
 
 import pytest
 
@@ -31,22 +32,12 @@ async def _register_and_login(async_client, suffix: str = "1"):
 
 
 async def _create_draft_research(async_client, token: str, topic: str = "测试主题"):
-    """Create a draft research with mocked LLM."""
-    mock_plan = [
-        {"name": "Agent1", "goal": "Goal1", "searchDirection": "Dir1"},
-        {"name": "Agent2", "goal": "Goal2", "searchDirection": "Dir2"},
-        {"name": "Agent3", "goal": "Goal3", "searchDirection": "Dir3"},
-    ]
-    with patch(
-        "src.api.research.service_plan.llm_service.generate_plan",
-        new_callable=AsyncMock,
-        return_value=(mock_plan, 100),
-    ):
-        resp = await async_client.post(
-            "/api/v1/research/new",
-            json={"topic": topic, "template": "tech_research"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    """Create a draft research (requires mock_llm_for_graph fixture to be active)."""
+    resp = await async_client.post(
+        "/api/v1/research/new",
+        json={"topic": topic, "template": "tech_research"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
     return resp
 
 
@@ -57,7 +48,7 @@ async def _create_draft_research(async_client, token: str, topic: str = "测试�
 class TestResearchPlan:
     # ── AC-RES-001: 正常发起研究 ──
 
-    async def test_create_research_success(self, async_client):
+    async def test_create_research_success(self, async_client, mock_llm_for_graph):
         """正常发起 → 201, plan.subAgents ∈ [3,5], status='draft'"""
         token = await _register_and_login(async_client, "cs1")
         resp = await _create_draft_research(async_client, token)
@@ -70,7 +61,7 @@ class TestResearchPlan:
 
     # ── AC-RES-002: 并发研究被拒绝 ──
 
-    async def test_create_research_concurrent_rejected(self, async_client):
+    async def test_create_research_concurrent_rejected(self, async_client, mock_llm_for_graph):
         """已有 running 的研究 → 409 RESEARCH_IN_PROGRESS"""
         token = await _register_and_login(async_client, "cc1")
 
@@ -90,27 +81,24 @@ class TestResearchPlan:
 
     # ── AC-RES-019: LLM 超时 → 500 ──
 
-    async def test_create_research_llm_timeout(self, async_client):
+    async def test_create_research_llm_timeout(self, async_client, mock_llm_for_graph):
         """LLM 超时 → 500 PLAN_GENERATION_FAILED"""
         token = await _register_and_login(async_client, "lt1")
 
-        with patch(
-            "src.api.research.service_plan.llm_service.generate_plan",
-            new_callable=AsyncMock,
-            side_effect=PlanGenerationFailedError("LLM 调用超时"),
-        ):
-            resp = await async_client.post(
-                "/api/v1/research/new",
-                json={"topic": "超时主题", "template": "tech_research"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        mock_llm_for_graph["llm"].generate_plan.side_effect = PlanGenerationFailedError("LLM 调用超时")
+
+        resp = await async_client.post(
+            "/api/v1/research/new",
+            json={"topic": "超时主题", "template": "tech_research"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
         assert resp.status_code == 500
         assert resp.json()["code"] == "PLAN_GENERATION_FAILED"
 
     # ── AC-RES-003: 修改计划 ──
 
-    async def test_revise_plan_success(self, async_client):
+    async def test_revise_plan_success(self, async_client, mock_llm_for_graph):
         """反馈修改 → 200, planRound 递增, plan 更新"""
         token = await _register_and_login(async_client, "rv1")
         resp = await _create_draft_research(async_client, token)
@@ -122,16 +110,13 @@ class TestResearchPlan:
             {"name": "Revised3", "goal": "G3", "searchDirection": "D3"},
             {"name": "Revised4", "goal": "G4", "searchDirection": "D4"},
         ]
-        with patch(
-            "src.api.research.service_plan.llm_service.revise_plan",
-            new_callable=AsyncMock,
-            return_value=(revised_plan, 50),
-        ):
-            rev_resp = await async_client.post(
-                f"/api/v1/research/{rid}/plan/revise",
-                json={"feedback": "增加一个对比竞品"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        mock_llm_for_graph["llm"].revise_plan = AsyncMock(return_value=(revised_plan, 300))
+
+        rev_resp = await async_client.post(
+            f"/api/v1/research/{rid}/plan/revise",
+            json={"feedback": "增加一个对比竞品"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
         assert rev_resp.status_code == 200
         data = rev_resp.json()
@@ -140,7 +125,7 @@ class TestResearchPlan:
 
     # ── AC-RES-004: 第 11 次修改被拒绝 ──
 
-    async def test_revise_plan_too_many(self, async_client, test_db):
+    async def test_revise_plan_too_many(self, async_client, test_db, mock_llm_for_graph):
         """第 11 次修改 → 400 TOO_MANY_REVISIONS"""
         token = await _register_and_login(async_client, "tm1")
         resp = await _create_draft_research(async_client, token)
@@ -167,7 +152,7 @@ class TestResearchPlan:
 
     # ── status ≠ draft 时修改 → 400 ──
 
-    async def test_revise_plan_not_draft(self, async_client):
+    async def test_revise_plan_not_draft(self, async_client, mock_llm_for_graph):
         """status≠'draft' 时修改 → 400 INVALID_STATUS"""
         token = await _register_and_login(async_client, "nd1")
         resp = await _create_draft_research(async_client, token)
@@ -190,7 +175,7 @@ class TestResearchPlan:
 
     # ── AC-RES-005: 确认计划 ──
 
-    async def test_confirm_plan_success(self, async_client):
+    async def test_confirm_plan_success(self, async_client, mock_llm_for_graph):
         """status='draft' → POST confirm → 200, status='running'"""
         token = await _register_and_login(async_client, "cf1")
         resp = await _create_draft_research(async_client, token)
@@ -208,7 +193,7 @@ class TestResearchPlan:
 
     # ── 非 draft 状态确认 → 400 ──
 
-    async def test_confirm_plan_not_draft(self, async_client):
+    async def test_confirm_plan_not_draft(self, async_client, mock_llm_for_graph):
         """非 draft 状态确认 → 400 INVALID_STATUS"""
         token = await _register_and_login(async_client, "cf2")
         resp = await _create_draft_research(async_client, token)
@@ -231,7 +216,7 @@ class TestResearchPlan:
 
     # ── AC-RES-022: 获取详情 — 草稿阶段 ──
 
-    async def test_get_research_detail_draft(self, async_client):
+    async def test_get_research_detail_draft(self, async_client, mock_llm_for_graph):
         """status='draft' → GET /{id} → 含 plan, planRound"""
         token = await _register_and_login(async_client, "gd1")
         resp = await _create_draft_research(async_client, token)
@@ -249,7 +234,7 @@ class TestResearchPlan:
 
     # ── AC-RES-023: 获取详情 — 执行中 ──
 
-    async def test_get_research_detail_running(self, async_client):
+    async def test_get_research_detail_running(self, async_client, mock_llm_for_graph):
         """status='running' → GET /{id} → 含 subAgentResults"""
         token = await _register_and_login(async_client, "gd2")
         resp = await _create_draft_research(async_client, token)
@@ -286,7 +271,7 @@ class TestResearchPlan:
 
     # ── 访问他人研究 → 403 ──
 
-    async def test_get_research_unauthorized(self, async_client):
+    async def test_get_research_unauthorized(self, async_client, mock_llm_for_graph):
         """访问他人研究 → 403"""
         token1 = await _register_and_login(async_client, "ua1")
         token2 = await _register_and_login(async_client, "ua2")
@@ -303,7 +288,7 @@ class TestResearchPlan:
 
     # ── AC-RES-006: 草稿恢复 ──
 
-    async def test_draft_recovery(self, async_client):
+    async def test_draft_recovery(self, async_client, mock_llm_for_graph):
         """status='draft' 的研究可获取并恢复"""
         token = await _register_and_login(async_client, "dr1")
         resp = await _create_draft_research(async_client, token)

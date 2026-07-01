@@ -72,7 +72,8 @@ async def plan_generation_node(state: ResearchState, config: RunnableConfig) -> 
         logger.warning("plan_too_many_agents", count=len(plan))
         plan = plan[:5]
 
-    async with db_session_factory() as session:
+    session = await db_session_factory().__aenter__()
+    try:
         repo = ResearchRepository(session)
 
         # Check if research_id already exists (for pre-generated IDs)
@@ -83,7 +84,7 @@ async def plan_generation_node(state: ResearchState, config: RunnableConfig) -> 
                 existing.plan_json = plan
                 existing.plan_round = 1
                 existing.total_tokens = plan_tokens
-                await session.flush()
+                await session.commit()
                 return {
                     "plan": plan,
                     "plan_round": 1,
@@ -91,13 +92,14 @@ async def plan_generation_node(state: ResearchState, config: RunnableConfig) -> 
                     "status": "draft",
                 }
 
-        # Create new Research record
+        # Create new Research record with pre-generated ID
         research = await repo.create(user_id=user_id, topic=topic, template=template)
+        if research_id:
+            research.id = research_id  # Use pre-generated ID from exec_engine
         research.plan_json = plan
         research.plan_round = 1
         research.total_tokens = plan_tokens
         research.status = "draft"
-        await session.flush()
 
         # Create SubAgentResult records (pending)
         sa_repo = SubAgentResultRepository(session)
@@ -120,6 +122,11 @@ async def plan_generation_node(state: ResearchState, config: RunnableConfig) -> 
             "total_tokens": plan_tokens,
             "status": "draft",
         }
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 # ---------------------------------------------------------------------------
