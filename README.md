@@ -41,6 +41,7 @@ DeepResearch Agent 是一个基于多 Agent 协作的深度研究助手。用户
 - **PostgreSQL 16** — 主数据库
 - **LiteLLM** — 统一 LLM 接口层，兼容 100+ 厂商
 - **MCP Protocol (mcp SDK)** — 搜索源标准化接入
+- **纯 asyncio 编排** — Sub-agent 并行调度（未引入 LangGraph/LangChain，零框架依赖，完全自主可控）
 - **python-jose + bcrypt** — JWT 认证 + 密码加密
 - **SSE (sse-starlette)** — 实时进度推送
 - **structlog** — 结构化日志
