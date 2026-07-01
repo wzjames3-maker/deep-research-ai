@@ -617,3 +617,24 @@ def compile_research_graph(
     if checkpointer:
         return builder.compile(checkpointer=checkpointer)
     return builder.compile()
+
+
+# ---------------------------------------------------------------------------
+# Graph Singleton (lazy init with PostgresSaver)
+# ---------------------------------------------------------------------------
+
+_compiled_graph = None
+
+
+async def get_research_graph() -> Any:
+    """Return singleton compiled graph, creating on first call.
+
+    Uses PostgresSaver from checkpointer.py for production.
+    For testing, use compile_research_graph(checkpointer=MemorySaver()) directly.
+    """
+    global _compiled_graph
+    if _compiled_graph is None:
+        from src.services.checkpointer import get_checkpointer
+        checkpointer = await get_checkpointer()
+        _compiled_graph = compile_research_graph(checkpointer=checkpointer)
+    return _compiled_graph
