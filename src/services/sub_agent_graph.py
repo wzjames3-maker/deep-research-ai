@@ -157,14 +157,20 @@ async def analyze_node(state: SubAgentState, config: RunnableConfig) -> dict:
 
     try:
         # Use override if set (for testing), otherwise use real llm_service
+        # Note: real llm_service.sub_agent_search returns (dict, int) tuple;
+        # mock returns just a dict. Handle both formats.
         if _llm_service_override is not None:
-            analysis = await _llm_service_override.sub_agent_search(
+            result = await _llm_service_override.sub_agent_search(
                 findings=state.get("findings", ""),
                 search_results=results_text,
                 direction=state["search_direction"],
                 topic=state["topic"],
             )
-            tokens = analysis.get("token_used", 0)
+            if isinstance(result, tuple):
+                analysis, tokens = result
+            else:
+                analysis = result
+                tokens = analysis.get("token_used", 0)
         else:
             analysis, tokens = await llm_service.sub_agent_search(
                 findings=state.get("findings", ""),

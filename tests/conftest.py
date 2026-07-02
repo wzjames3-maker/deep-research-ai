@@ -97,12 +97,14 @@ def _reset_graph_singletons():
     import src.services.sub_agent_graph as sag
     rg._compiled_graph = None
     cp._checkpointer = None
+    cp._saver_ctx = None
     sag._mcp_client = None
     sag._llm_service_override = None
     sag.cancel_signals.clear()
     yield
     rg._compiled_graph = None
     cp._checkpointer = None
+    cp._saver_ctx = None
     sag._mcp_client = None
     sag._llm_service_override = None
     sag.cancel_signals.clear()
