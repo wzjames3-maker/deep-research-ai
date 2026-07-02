@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch, AsyncMock
+from uuid import uuid4
 
 import pytest
 
@@ -30,16 +31,12 @@ async def _register_and_login(async_client, suffix: str = "h1"):
 
 
 async def _create_research_via_api(async_client, token, topic="测试主题"):
-    with patch(
-        "src.api.research.service_plan.llm_service.generate_plan",
-        new_callable=AsyncMock,
-        return_value=(MOCK_PLAN, 100),
-    ):
-        resp = await async_client.post(
-            "/api/v1/research/new",
-            json={"topic": topic, "template": "tech_research"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    """Create research via API (requires mock_llm_for_graph fixture to be active)."""
+    resp = await async_client.post(
+        "/api/v1/research/new",
+        json={"topic": topic, "template": "tech_research"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
     return resp
 
 
@@ -47,7 +44,7 @@ async def _create_research_via_api(async_client, token, topic="测试主题"):
 class TestResearchHistory:
     # ── 历史列表 ──
 
-    async def test_list_history(self, async_client):
+    async def test_list_history(self, async_client, mock_llm_for_graph):
         """创建 3 条研究 → 历史返回 3 条, 按时间倒序"""
         token = await _register_and_login(async_client, "lh1")
 
@@ -128,7 +125,7 @@ class TestResearchHistory:
 
     # ── 软删除 ──
 
-    async def test_soft_delete(self, async_client):
+    async def test_soft_delete(self, async_client, mock_llm_for_graph):
         """DELETE → 200, 历史不再返回该记录"""
         token = await _register_and_login(async_client, "sd1")
         resp = await _create_research_via_api(async_client, token, "待删除主题")

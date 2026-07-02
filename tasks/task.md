@@ -10,6 +10,7 @@
 | M4 | 前端工作台 UI（计划/进度/报告） | Phase 5 (task 23-29) |
 | M5 | 历史 + Token 仪表盘 + 复制导出 | Phase 5 (task 25, 30) |
 | M6 | 联调与上线 | Phase 6 |
+| M7-LG | LangGraph 迁移 | Phase 7-LG (task 33-48) |
 
 ---
 
@@ -50,6 +51,22 @@
 | 30 | 5 | 研究历史页面 | ✅ Done | frontend/01 REQ-FE-008 + REQ-FE-009 | AC-FE-011, 012 |
 | 31 | 6 | 集成测试 | ✅ Done | 全部 AC | 全部 AC |
 | 32 | 6 | Spec 复查 + 代码打磨 | ✅ Done | 全部 spec | — |
+| 33 | 7-LG | langgraph 依赖 + PostgresSaver 初始化 | ✅ Done | research/07 §LangGraph 架构约束 | — |
+| 34 | 7-LG | State Schema 定义 (ResearchState + SubAgentState) | ✅ Done | research/07 §State 定义 | — |
+| 35 | 7-LG | 更新 specs/research/ spec 文件 | ✅ Done | research/00~08 | — |
+| 36 | 7-LG | Sub-agent subgraph 测试 (8 pass) | ✅ Done | research/04 RULE-005~007 | AC-RES-008, 009 |
+| 37 | 7-LG | Main graph 测试 (25 pass) | ✅ Done | research/04 RULE-004, 008, 009 | AC-RES-025, 026, 027 |
+| 38 | 7-LG | Sub-agent subgraph 实现 | ✅ Done | research/04 RULE-005~007 | AC-RES-008, 009 |
+| 39 | 7-LG | Plan 节点实现 (generation + revision + interrupt) | ✅ Done | research/04 RULE-002, 003 | AC-RES-026 |
+| 40 | 7-LG | Dispatch + Aggregate + check_cancel 节点 | ✅ Done | research/04 RULE-004, 008, 009 | AC-RES-010, 011, 027 |
+| 41 | 7-LG | 编译 main graph + PostgresSaver | ✅ Done | research/07 §StateGraph 结构 | — |
+| 42 | 7-LG | 重写 exec_engine.py → graph wrapper | ✅ Done | research/08 §API 层调用接口 | — |
+| 43 | 7-LG | 更新 service_plan.py (invoke/resume) | ✅ Done | research/03 API-RES-001~003 | AC-RES-001~006 |
+| 44 | 7-LG | 更新 router.py cancel + delete | ✅ Done | research/03 API-RES-008, 009 | AC-RES-012, 013 |
+| 45 | 7-LG | SSE 事件集成验证 | ✅ Done | research/03 API-RES-004 | AC-RES-007 |
+| 46 | 7-LG | 现有测试适配 LangGraph (224 pass) | ✅ Done | research/06 全部 AC | 全部 AC |
+| 47 | 7-LG | Graph 专项测试 (33 pass) | ✅ Done | research/06 AC-RES-025~027 | AC-RES-025, 026, 027 |
+| 48 | 7-LG | 集成测试 (52 pass) | ✅ Done | research/06 全部 AC | 全部 AC |
 
 ---
 
@@ -104,4 +121,22 @@ Phase 5 (Frontend)
 Phase 6 (集成)
   31 ←──── 全部 Phase 2-5
   32 ←──── 31
+
+Phase 7-LG (LangGraph 迁移)
+  33 ←──── 32 (基础设施就绪)
+  34 ←──── 33 (langgraph 已安装)
+  35 ←──── 33 (spec 更新，可与 34 并行)
+  36 (RED) ←──── 34, 38 (sub_agent_graph 接口)
+  37 (RED) ←──── 34, 41 (main graph 接口)
+  38 (GREEN) ←──── 34, 36, 33
+  39 ←──── 34, 15 (llm_service)
+  40 ←──── 38, 39
+  41 ←──── 33, 38, 39, 40
+  42 ←──── 41
+  43 ←──── 42
+  44 ←──── 42, 41
+  45 ←──── 40, 43, 44
+  46 ←──── 42, 43, 44
+  47 ←──── 41, 46
+  48 ←──── 46, 47
 ```

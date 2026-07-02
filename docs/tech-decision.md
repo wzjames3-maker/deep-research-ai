@@ -64,16 +64,20 @@
 | 方案 | 优点 | 缺点 | 调研约束 |
 |---|---|---|---|
 | LangGraph | Subgraph 天然支持主→子模式、State 管理、Human-in-the-loop、Checkpoint 断点续传 | 学习曲线中高、抽象层可能过重 | 调研推荐首选 |
-| 纯 Python asyncio 编排 | 完全自主可控、零框架学习成本 | 自行实现状态管理/重试/超时/错误恢复 | 降级备选 |
+| 纯 Python asyncio 编排 | 完全自主可控、零框架学习成本 | 自行实现状态管理/重试/超时/错误恢复 | ~~降级备选~~（已废弃） |
 
-### 决策：LangGraph（首选），纯 asyncio（降级备选）
+### 决策：LangGraph（全流程统一编排）
 ### 理由
-1. 本项目的核心执行模式（主 Agent → 3-5 Sub-agent 并行 → 汇总）天然对应 LangGraph 的 Subgraph
-2. UC-004 多轮讨论修改需要 Human-in-the-loop → LangGraph 的 `interrupt` 机制直接支持
-3. 长期运行研究的 Checkpoint 保存 → LangGraph 的 `checkpointer` 内置
-4. 如果开发中发现 LangGraph 概念负担 > 实际收益，降级为纯 asyncio + 自定义 State Machine
-### 风险：LangGraph 学习成本可能拖慢初期进度
-### 缓解：M2 阶段先用纯 asyncio 验证核心链路，M3 可选迁移到 LangGraph
+1. 本项目的核心执行模式（主 Agent → 3-5 Sub-agent 并行 → 汇总）天然对应 LangGraph 的 StateGraph + Send API
+2. UC-004 多轮讨论修改需要 Human-in-the-loop → LangGraph 的 `interrupt()` 机制直接支持
+3. 长期运行研究的崩溃恢复 → LangGraph 的 `PostgresSaver` checkpointer 内置持久化
+4. 全流程（Plan → Review → Execute → Aggregate）统一为一个 StateGraph，通过 `interrupt()` 实现同步 API 返回
+5. V1 已用纯 asyncio 验证核心链路（185 测试通过、端到端跑通），现正式迁移到 LangGraph
+### ~~风险~~：已消除 — asyncio 验证阶段已证明核心链路可行，迁移风险可控
+### ~~缓解~~：已执行完毕 — M2 阶段 asyncio 验证已完成
+### 迭代记录
+- **V1.0.0**：纯 asyncio 实现（exec_engine.py），185 测试通过，端到端验证成功
+- **V1.1.0（本次迭代）**：迁移到 LangGraph 全流程编排，引入 PostgresSaver checkpoint + interrupt() human-in-the-loop
 
 ---
 
@@ -186,9 +190,9 @@
 │  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
 │  │  Nginx    │  │  FastAPI  │  │ PostgreSQL │  │
 │  │ (React    │  │  Server   │  │    16      │  │
-│  │  SPA +    │◄─┤(LangGraph │──┤            │  │
-│  │  反向代理) │  │ /asyncio  │  │            │  │
-│  └──────────┘  │+ LiteLLM  │  └────────────┘  │
+│  │  SPA +    │◄─┤ LangGraph │──┤  +checkpt  │  │
+│  │  反向代理) │  │+ LiteLLM  │  │            │  │
+│  └──────────┘  │+ MCP      │  └────────────┘  │
 │                │     │     │                  │
 │                │   MCP    │                   │
 │                │  Client  │                   │
@@ -207,7 +211,7 @@
 
 各层职责：
 - **Nginx**：React SPA 静态文件托管 + `/api/` 反向代理 + SSE 长连接代理
-- **FastAPI Server**：Auth API + Research API + SSE 推送 + Sub-agent 编排（LangGraph 首选 / asyncio 降级）+ LiteLLM SDK + MCP Client
-- **PostgreSQL**：用户表 + 研究历史表 + Sub-agent 结果表（支持软删除）
+- **FastAPI Server**：Auth API + Research API + SSE 推送 + LangGraph 全流程编排（StateGraph + PostgresSaver）+ LiteLLM SDK + MCP Client
+- **PostgreSQL**：用户表 + 研究历史表 + Sub-agent 结果表 + LangGraph checkpoint 表（支持软删除）
 - **Brave Search MCP Container**：独立 Docker 容器，通过 HTTP→MCP 协议与 FastAPI 通信
 - **LLM API**：通过 LiteLLM SDK 统一接口层调用，可切换多厂商

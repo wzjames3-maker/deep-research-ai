@@ -1,17 +1,69 @@
 import asyncio
 import gc
 import logging
+import sys
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
+from unittest.mock import AsyncMock, MagicMock, patch
 from src.config import settings
 from src.models.base import Base, get_db
 from src.main import create_app
 from src.middleware.rate_limiter import _store as rate_limit_store
 from src.utils.ticket_store import _store as ticket_store
+
+
+# ---------------------------------------------------------------------------
+# Shared mock plan data
+# ---------------------------------------------------------------------------
+MOCK_PLAN = [
+    {"name": "market_analyst", "goal": "分析市场规模", "searchDirection": "AI market size"},
+    {"name": "tech_analyst", "goal": "分析技术趋势", "searchDirection": "AI technology trends"},
+    {"name": "competitor_analyst", "goal": "分析竞争对手", "searchDirection": "AI competitors"},
+]
+
+MOCK_PLAN_REVISED = [
+    {"name": "market_analyst", "goal": "分析市场规模（修订）", "searchDirection": "AI market size revised"},
+    {"name": "tech_analyst", "goal": "分析技术趋势", "searchDirection": "AI technology trends"},
+    {"name": "competitor_analyst", "goal": "分析竞争对手", "searchDirection": "AI competitors"},
+    {"name": "strategy_analyst", "goal": "分析策略", "searchDirection": "AI strategy"},
+]
+
+
+@pytest.fixture
+def mock_plan():
+    return MOCK_PLAN
+
+
+@pytest.fixture
+def mock_llm_for_graph():
+    """Mock LLM service at graph level so graph still creates DB records."""
+    from langgraph.checkpoint.memory import MemorySaver
+    from src.services.research_graph import compile_research_graph
+
+    mock_llm = MagicMock()
+    mock_llm.generate_plan = AsyncMock(return_value=(MOCK_PLAN, 500))
+    mock_llm.revise_plan = AsyncMock(return_value=(MOCK_PLAN_REVISED, 300))
+    mock_llm.aggregate_report = AsyncMock(return_value=("# Mock Report", 200))
+
+    memory_saver = MemorySaver()
+    test_graph = compile_research_graph(
+        llm_service_override=mock_llm,
+        checkpointer=memory_saver
+    )
+
+    with patch("src.services.exec_engine.get_research_graph", return_value=test_graph):
+        yield {"llm": mock_llm}
+
+
+# ---------------------------------------------------------------------------
+# Windows event loop policy fix for psycopg
+# ---------------------------------------------------------------------------
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 # ---------------------------------------------------------------------------
@@ -37,9 +89,35 @@ def _clear_stores():
     ticket_store.clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_graph_singletons():
+    """Reset graph and checkpointer singletons between tests."""
+    import src.services.research_graph as rg
+    import src.services.checkpointer as cp
+    import src.services.sub_agent_graph as sag
+    rg._compiled_graph = None
+    cp._checkpointer = None
+    cp._saver_ctx = None
+    sag._mcp_client = None
+    sag._llm_service_override = None
+    sag.cancel_signals.clear()
+    yield
+    rg._compiled_graph = None
+    cp._checkpointer = None
+    cp._saver_ctx = None
+    sag._mcp_client = None
+    sag._llm_service_override = None
+    sag.cancel_signals.clear()
+
+
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
-    engine = create_async_engine(settings.DATABASE_URL, echo=False, poolclass=NullPool)
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        poolclass=NullPool,
+        connect_args={"server_settings": {"idle_in_transaction_session_timeout": "3000"}},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield engine

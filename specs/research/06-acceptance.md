@@ -90,13 +90,13 @@ REQ-RES-001 ~ 017 + RULE-RES-001 ~ 011 + EC-RES-001 ~ 012
 
 ---
 
-## AC-RES-009: 2 轮循环硬限制 (RULE-RES-005)
+## AC-RES-009: 4 轮循环硬限制 (RULE-RES-005)
 
 - **Given**: Sub-agent 执行中
-- **When**: 完成 2 轮搜索
+- **When**: 完成 4 轮搜索
 - **Then**:
-  - [ ] 第 3 轮不再发起
-  - [ ] SubAgentResult.rounds_completed = 2
+  - [ ] 第 5 轮不再发起
+  - [ ] SubAgentResult.rounds_completed = 4
   - [ ] 状态变为 completed 并输出 findings
 
 ---
@@ -265,3 +265,46 @@ REQ-RES-001 ~ 017 + RULE-RES-001 ~ 011 + EC-RES-001 ~ 012
   - [ ] 30 秒后 ticket 过期 → 用过期 ticket 重连 → 401
 - **When**: `GET /api/v1/research/{id}/stream?ticket=<invalid_ticket>`
 - **Then**: 返回 401
+
+---
+
+## AC-RES-025: Checkpoint 恢复（EC-RES-013, V1.1.0 新增）
+
+- **Given**: status='running' 的研究，Sub-agent 执行到一半
+- **When**: 应用进程崩溃后重启，调用 `graph.ainvoke(None, config)`
+- **Then**:
+   - [ ] Graph 从 checkpoint 保存的位置恢复执行
+   - [ ] 已完成的 Sub-agent 结果不丢失
+   - [ ] 正在执行的 Sub-agent 从当前轮次重新开始
+   - [ ] 最终生成完整或部分报告
+
+---
+
+## AC-RES-026: Interrupt → Resume 流程（V1.1.0 新增）
+
+- **Given**: 用户 POST /new 创建研究 → graph 运行到 `human_review` interrupt() 暂停
+- **When**: 用户 POST /revise，传入 feedback
+- **Then**:
+   - [ ] `graph.ainvoke(Command(resume={"action":"revise","feedback":...}), config)` 执行
+   - [ ] `plan_revision_node` 调用 LLM 修改计划
+   - [ ] Graph 回到 `human_review` interrupt() 暂停
+   - [ ] API 返回更新后的 plan
+- **When**: 用户 POST /confirm
+- **Then**:
+   - [ ] `graph.ainvoke(Command(resume={"action":"confirm"}), config)` 执行
+   - [ ] `dispatch_node` 通过 Send API 并行启动所有 Sub-agent
+   - [ ] API 返回 `{status: "running", streamUrl: "..."}`
+
+---
+
+## AC-RES-027: Hybrid 取消机制（RULE-RES-009, V1.1.0 新增）
+
+- **Given**: 研究执行中，3 个 Sub-agent 正在运行
+- **When**: 用户 POST /cancel
+- **Then**:
+   - [ ] `graph.aupdate_state(config, {"cancel_requested": True})` 写入 checkpoint
+   - [ ] `asyncio.Event` 实时信号立即通知 Sub-agent
+   - [ ] Sub-agent 在当前搜索轮次结束后检查到取消信号 → 退出
+   - [ ] `check_cancel` conditional edge 路由到 `partial_aggregate`
+   - [ ] 已完成的 Sub-agent 结果保留 → 生成部分报告
+   - [ ] 若崩溃恢复后发现 `cancel_requested=True` → 仍路由到 `partial_aggregate`

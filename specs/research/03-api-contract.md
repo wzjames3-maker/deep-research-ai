@@ -51,6 +51,8 @@ PRD.md §3 UC-003 ~ UC-009 + REQ-RES-001 ~ 017
 | 409 | RESEARCH_IN_PROGRESS | 当前有一个进行中的研究 | RULE-RES-001 |
 | 500 | PLAN_GENERATION_FAILED | 研究计划生成失败，请重试 | LLM 超时 30 秒 |
 
+> **V1.1.0 实现变更**: 底层通过 `graph.ainvoke({topic, template, ...}, config)` 运行到 `interrupt()` 暂停，返回 plan。请求/响应格式不变。
+
 ---
 
 ## API-RES-002: 修改研究计划
@@ -88,9 +90,11 @@ PRD.md §3 UC-003 ~ UC-009 + REQ-RES-001 ~ 017
 | 504 | PLAN_GENERATION_TIMEOUT | 计划生成超时（>30秒） | LLM 超时 |
 
 ### 前端使用说明
-- 必须配置 **30 秒超时**（axios/HTTP client）
+- 必须配置 **60 秒超时**（axios/HTTP client）
 - 等待期间显示 **Loading 状态**（按钮禁用 + 骨架屏/Spinner）
 - 超时后展示"计划生成超时，请重试"提示，允许用户重新提交
+
+> **V1.1.0 实现变更**: 底层通过 `graph.ainvoke(Command(resume={"action":"revise","feedback":...}), config)` resume graph → `plan_revision_node` → 回到 `interrupt()` 暂停，返回新 plan。请求/响应格式不变。
 
 ---
 
@@ -119,6 +123,8 @@ PRD.md §3 UC-003 ~ UC-009 + REQ-RES-001 ~ 017
 | 404 | NOT_FOUND | 研究记录不存在 | — |
 | 403 | FORBIDDEN | 无权操作该研究 | userId 不匹配 |
 | 400 | INVALID_STATUS | 当前状态不允许确认 | status != 'draft' |
+
+> **V1.1.0 实现变更**: 底层通过 `graph.ainvoke(Command(resume={"action":"confirm"}), config)` resume graph → `dispatch_node`（Send API fan-out）→ Sub-agent 并行执行 → `aggregate_node`。confirm 后 `asyncio.create_task()` 后台执行。请求/响应格式不变。
 
 ---
 
@@ -178,6 +184,15 @@ PRD.md §3 UC-003 ~ UC-009 + REQ-RES-001 ~ 017
   "name": "string",
   "status": "failed",
   "error": "string"
+}
+```
+
+#### event: `aggregation_start` — 汇总开始
+```json
+{
+  "status": "aggregating",
+  "completedAgents": 3,
+  "totalAgents": 4
 }
 ```
 
@@ -346,6 +361,8 @@ PRD.md §3 UC-003 ~ UC-009 + REQ-RES-001 ~ 017
 | 404 | NOT_FOUND | 研究记录不存在或已删除 |
 | 403 | FORBIDDEN | userId 不匹配 |
 | 400 | INVALID_STATUS | status 非 'running'（如已完成/已取消） |
+
+> **V1.1.0 实现变更**: 底层通过 hybrid 取消机制：`graph.aupdate_state(config, {"cancel_requested": True})` 持久化取消标志 + `asyncio.Event` 实时信号。请求/响应格式不变。
 
 ---
 

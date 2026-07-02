@@ -4,6 +4,7 @@ AC-RES-001 ~ 024
 """
 import pytest
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 from tests.integration.conftest import MOCK_PLAN
 
 
@@ -11,15 +12,13 @@ class TestResearchEndToEnd:
     """真正的端到端全流程串联测试."""
 
     @pytest.mark.asyncio
-    async def test_full_research_lifecycle(self, async_client, auth_headers, db_session):
+    async def test_full_research_lifecycle(self, async_client, auth_headers, db_session, mock_llm_for_graph):
         """新建→修改×2→确认→执行完成→报告→Token统计→软删除: 单测串联完整流程."""
         # ── Step 1: 新建研究 ──
-        with patch("src.api.research.service_plan.llm_service.generate_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 500)):
-            r = await async_client.post("/api/v1/research/new", json={
-                "topic": "AI 市场趋势分析",
-                "template": "tech_research",
-            }, headers=auth_headers)
+        r = await async_client.post("/api/v1/research/new", json={
+            "topic": "AI 市场趋势分析",
+            "template": "tech_research",
+        }, headers=auth_headers)
         assert r.status_code == 201
         create_data = r.json()
         research_id = create_data["researchId"]
@@ -31,26 +30,24 @@ class TestResearchEndToEnd:
             {"name": "revised_1", "goal": "目标1", "searchDirection": "dir1"},
             {"name": "revised_2", "goal": "目标2", "searchDirection": "dir2"},
         ]
-        with patch("src.api.research.service_plan.llm_service.revise_plan",
-                   new_callable=AsyncMock, return_value=(revised_plan_1, 200)):
-            r = await async_client.post(
-                f"/api/v1/research/{research_id}/plan/revise",
-                json={"feedback": "增加对比分析"},
-                headers=auth_headers,
-            )
+        mock_llm_for_graph["llm"].revise_plan = AsyncMock(return_value=(revised_plan_1, 300))
+        r = await async_client.post(
+            f"/api/v1/research/{research_id}/plan/revise",
+            json={"feedback": "增加对比分析"},
+            headers=auth_headers,
+        )
         assert r.status_code == 200
         assert r.json()["planRound"] == 2
 
         revised_plan_2 = [
             {"name": "revised_2_1", "goal": "目标A", "searchDirection": "dirA"},
         ]
-        with patch("src.api.research.service_plan.llm_service.revise_plan",
-                   new_callable=AsyncMock, return_value=(revised_plan_2, 150)):
-            r = await async_client.post(
-                f"/api/v1/research/{research_id}/plan/revise",
-                json={"feedback": "简化为一个方向"},
-                headers=auth_headers,
-            )
+        mock_llm_for_graph["llm"].revise_plan = AsyncMock(return_value=(revised_plan_2, 200))
+        r = await async_client.post(
+            f"/api/v1/research/{research_id}/plan/revise",
+            json={"feedback": "简化为一个方向"},
+            headers=auth_headers,
+        )
         assert r.status_code == 200
         assert r.json()["planRound"] == 3
 
@@ -119,14 +116,12 @@ class TestResearchCreate:
     """研究创建场景."""
 
     @pytest.mark.asyncio
-    async def test_create_research_success(self, async_client, auth_headers):
+    async def test_create_research_success(self, async_client, auth_headers, mock_llm_for_graph):
         """AC-RES-001: 正常发起研究 → 201, 含 3-5 sub-agents."""
-        with patch("src.api.research.service_plan.llm_service.generate_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 500)):
-            r = await async_client.post("/api/v1/research/new", json={
-                "topic": "React 19 新特性分析",
-                "template": "tech_research",
-            }, headers=auth_headers)
+        r = await async_client.post("/api/v1/research/new", json={
+            "topic": "React 19 新特性分析",
+            "template": "tech_research",
+        }, headers=auth_headers)
         assert r.status_code == 201
         data = r.json()
         assert "researchId" in data
@@ -139,15 +134,13 @@ class TestResearchCreate:
             assert "searchDirection" in sa
 
     @pytest.mark.asyncio
-    async def test_concurrent_research_409(self, async_client, auth_headers, db_session):
+    async def test_concurrent_research_409(self, async_client, auth_headers, db_session, mock_llm_for_graph):
         """AC-RES-002: 已有 running 研究 → 409."""
         # Step 1: 通过 API 创建研究
-        with patch("src.api.research.service_plan.llm_service.generate_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 500)):
-            r = await async_client.post("/api/v1/research/new", json={
-                "topic": "第一个研究",
-                "template": "tech_research",
-            }, headers=auth_headers)
+        r = await async_client.post("/api/v1/research/new", json={
+            "topic": "第一个研究",
+            "template": "tech_research",
+        }, headers=auth_headers)
         assert r.status_code == 201
         research_id = r.json()["researchId"]
 
@@ -161,12 +154,10 @@ class TestResearchCreate:
         assert r.json()["status"] == "running"
 
         # Step 3: 尝试创建第二个研究 → 409
-        with patch("src.api.research.service_plan.llm_service.generate_plan",
-                   new_callable=AsyncMock, return_value=(MOCK_PLAN, 500)):
-            r = await async_client.post("/api/v1/research/new", json={
-                "topic": "另一个主题",
-                "template": "tech_research",
-            }, headers=auth_headers)
+        r = await async_client.post("/api/v1/research/new", json={
+            "topic": "另一个主题",
+            "template": "tech_research",
+        }, headers=auth_headers)
         assert r.status_code == 409
         assert r.json()["code"] == "RESEARCH_IN_PROGRESS"
 
@@ -175,7 +166,7 @@ class TestResearchPlanRevise:
     """计划修改场景."""
 
     @pytest.mark.asyncio
-    async def test_revise_plan_increments_round(self, async_client, auth_headers, draft_research):
+    async def test_revise_plan_increments_round(self, async_client, auth_headers, draft_research, mock_llm_for_graph):
         """AC-RES-003: 修改计划 → planRound 递增."""
         research_id = draft_research["researchId"]
 
@@ -183,14 +174,13 @@ class TestResearchPlanRevise:
             {"name": "revised_agent_1", "goal": "新目标1", "searchDirection": "direction1"},
             {"name": "revised_agent_2", "goal": "新目标2", "searchDirection": "direction2"},
         ]
+        mock_llm_for_graph["llm"].revise_plan = AsyncMock(return_value=(revised_plan, 300))
 
-        with patch("src.api.research.service_plan.llm_service.revise_plan",
-                   new_callable=AsyncMock, return_value=(revised_plan, 200)):
-            r = await async_client.post(
-                f"/api/v1/research/{research_id}/plan/revise",
-                json={"feedback": "增加一个对比竞品的子任务"},
-                headers=auth_headers,
-            )
+        r = await async_client.post(
+            f"/api/v1/research/{research_id}/plan/revise",
+            json={"feedback": "增加一个对比竞品的子任务"},
+            headers=auth_headers,
+        )
         assert r.status_code == 200
         data = r.json()
         assert data["planRound"] == 2  # 第 1 次修改后，当前是第 2 轮
@@ -217,13 +207,11 @@ class TestResearchPlanRevise:
         await db_session.commit()
 
         revised_plan = MOCK_PLAN
-        with patch("src.api.research.service_plan.llm_service.revise_plan",
-                   new_callable=AsyncMock, return_value=(revised_plan, 200)):
-            r = await async_client.post(
-                f"/api/v1/research/{research_id}/plan/revise",
-                json={"feedback": "第 11 次修改"},
-                headers=auth_headers,
-            )
+        r = await async_client.post(
+            f"/api/v1/research/{research_id}/plan/revise",
+            json={"feedback": "第 11 次修改"},
+            headers=auth_headers,
+        )
         assert r.status_code == 400
         assert r.json()["code"] == "TOO_MANY_REVISIONS"
 

@@ -11,18 +11,21 @@ from src.middleware.cors import setup_cors
 from src.errors import AppException, app_exception_handler
 from src.middleware.rate_limiter import cleanup_expired_entries
 from src.utils.logging import RequestIdMiddleware, setup_logging
+from src.services.checkpointer import get_checkpointer, close_checkpointer
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
     cleanup_task = asyncio.create_task(cleanup_expired_entries())
+    await get_checkpointer()  # Initialize LangGraph checkpoint tables
     yield
     cleanup_task.cancel()
     try:
         await cleanup_task
     except asyncio.CancelledError:
         pass
+    await close_checkpointer()  # Close checkpoint connection pool
 
 
 def create_app() -> FastAPI:
