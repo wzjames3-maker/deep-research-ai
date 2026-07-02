@@ -2,11 +2,23 @@
 
 > 将 1-2 小时的研究工作压缩到 5-10 分钟，输出系统化的 Markdown 研究报告。
 
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
+[![LangGraph](https://img.shields.io/badge/orchestration-LangGraph-green.svg)](https://langchain-ai.github.io/langgraph/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+
 ## ✨ 项目简介
 
-DeepResearch Agent 是一个基于多 Agent 协作的深度研究助手。用户输入研究主题后，主 Agent 自动拆解为 3-5 个子研究方向，各 Sub-agent 并行通过搜索引擎采集信息，最终汇总生成结构化的 Markdown 研究报告。
+DeepResearch Agent 是一个基于 LangGraph 编排的多 Agent 深度研究助手。用户输入研究主题后，主 Agent 自动拆解为 3-5 个子研究方向，各 Sub-agent 并行通过搜索引擎采集信息，最终汇总生成结构化的 Markdown 研究报告。
 
-**核心流程：** 用户输入主题 → 主 Agent 生成研究计划 → 用户审核/修改计划 → Sub-agent 并行执行搜索 → 汇总 Agent 生成报告
+**核心流程：** 输入主题 → LLM 生成研究计划 → 用户审核/修改（interrupt） → Sub-agent 并行搜索（Send API） → 汇总报告
+
+### V1.1.0 更新（2026-07）
+
+- 🆕 **LangGraph 全流程编排** — 从纯 asyncio 迁移到 LangGraph StateGraph
+- 🆕 **PostgresSaver checkpoint** — Graph state 持久化，支持崩溃恢复
+- 🆕 **interrupt() Human-in-the-loop** — Plan 阶段原生中断/恢复
+- 🆕 **Send API 并行分发** — Sub-agent 原生并行执行
+- ✅ 224 测试通过（+39 新增 graph tests）
 
 ## 🏗️ 架构
 
@@ -16,8 +28,8 @@ DeepResearch Agent 是一个基于多 Agent 协作的深度研究助手。用户
 │                                                    │
 │  ┌─────────┐   ┌───────────┐   ┌──────────────┐   │
 │  │  Nginx   │   │  FastAPI   │   │ PostgreSQL 16│   │
-│  │ (React   │◄──┤  Server    ├──┤              │   │
-│  │  SPA +   │   │(asyncio +  │   └──────────────┘   │
+│  │ (React   │◄──┤  Server    ├──┤  + checkpoint│   │
+│  │  SPA +   │   │(LangGraph +│   └──────────────┘   │
 │  │  反代)   │   │ LiteLLM +  │                      │
 │  └─────────┘   │ MCP Client)│                      │
 │                └─────┬──────┘                      │
@@ -37,11 +49,12 @@ DeepResearch Agent 是一个基于多 Agent 协作的深度研究助手。用户
 
 ### 后端
 - **Python 3.12 + FastAPI** — 异步 API 框架
+- **LangGraph StateGraph** — Agent 全流程编排（Plan → interrupt → Send API → Aggregate）
+- **PostgresSaver** — Graph checkpoint 持久化（复用 PostgreSQL）
 - **SQLAlchemy 2.0 (async) + Alembic** — ORM 与数据库迁移
-- **PostgreSQL 16** — 主数据库
+- **PostgreSQL 16** — 主数据库 + LangGraph checkpoint 表
 - **LiteLLM** — 统一 LLM 接口层，兼容 100+ 厂商
 - **MCP Protocol (mcp SDK)** — 搜索源标准化接入
-- **纯 asyncio 编排** — Sub-agent 并行调度（未引入 LangGraph/LangChain，零框架依赖，完全自主可控）
 - **python-jose + bcrypt** — JWT 认证 + 密码加密
 - **SSE (sse-starlette)** — 实时进度推送
 - **structlog** — 结构化日志
@@ -141,12 +154,13 @@ npm run dev  # 默认 http://localhost:5173
 
 ### 研究流程
 - **研究模板**：技术调研 / 竞品分析 / 论文综述 / 自定义
-- **计划生成**：主 Agent 自动拆分为 3-5 个 Sub-agent 研究方向
-- **计划修改**：支持多轮对话式修改（最多 10 轮）
-- **并行执行**：Sub-agent 并行搜索，每个最多 2 轮
-- **实时进度**：SSE 推送 8 种事件类型（计划生成、执行状态、结果摘要等）
+- **计划生成**：主 Agent（LLM）自动拆分为 3-5 个 Sub-agent 研究方向
+- **计划修改**：支持多轮对话式修改（最多 10 轮），LangGraph interrupt() 实现
+- **并行执行**：LangGraph Send API fan-out，Sub-agent 并行搜索，每个最多 2 轮
+- **实时进度**：SSE 推送 8 种事件类型（计划确认、执行状态、结果摘要等）
 - **中断恢复**：支持中途停止，保留已完成结果并生成部分报告
 - **URL 去重**：跨 Sub-agent 搜索结果自动去重
+- **崩溃恢复**：PostgresSaver checkpoint 持久化，服务重启后从断点恢复
 
 ### 研究报告
 - 三 Tab 视图：研究计划 / Sub-agent 结果 / 汇总报告
@@ -170,11 +184,15 @@ npm run dev  # 默认 http://localhost:5173
 │   ├── models/                 # 数据模型（User, Research, SubAgentResult）
 │   ├── repos/                  # 数据访问层
 │   ├── services/               # 业务逻辑层
-│   │   ├── llm_service.py      # LLM 调用（LiteLLM）
-│   │   ├── mcp_client.py       # MCP 协议客户端
-│   │   ├── exec_engine.py      # Sub-agent 并行执行引擎
-│   │   ├── sse_manager.py      # SSE 推送管理
-│   │   └── prompts.py          # Agent 提示词模板
+│   │   ├── research_graph.py    # LangGraph 主 Graph 节点
+│   │   ├── sub_agent_graph.py   # Sub-agent Subgraph
+│   │   ├── graph_state.py       # ResearchState + SubAgentState
+│   │   ├── checkpointer.py      # PostgresSaver 单例
+│   │   ├── llm_service.py       # LLM 调用（LiteLLM）
+│   │   ├── mcp_client.py        # MCP 协议客户端
+│   │   ├── exec_engine.py       # Graph 调用包装器（thin wrapper）
+│   │   ├── sse_manager.py       # SSE 推送管理
+│   │   └── prompts.py           # Agent 提示词模板
 │   ├── middleware/             # 中间件（Auth, CORS, RateLimiter）
 │   ├── utils/                  # 工具（JWT, bcrypt, logging, ticket_store）
 │   ├── config.py               # 配置管理
@@ -192,7 +210,8 @@ npm run dev  # 默认 http://localhost:5173
 ├── tests/                      # 测试
 │   ├── test_auth_*.py          # 认证模块测试
 │   ├── test_research_*.py      # 研究模块测试
-│   └── integration/            # 集成测试
+│   ├── unit/                   # Graph 单元测试（39 tests）
+│   └── integration/            # 集成测试（52 tests）
 ├── specs/                      # 施工图纸
 │   ├── auth/                   # 认证模块规格
 │   ├── research/               # 研究模块规格
@@ -203,12 +222,15 @@ npm run dev  # 默认 http://localhost:5173
 │   ├── phase-3/                # 研究核心
 │   ├── phase-4/                # 研究 API
 │   ├── phase-5/                # 前端 UI
-│   └── phase-6/                # 联调上线
+│   ├── phase-6/                # 联调上线
+│   └── phase-7-lg/             # LangGraph 迁移
 ├── docs/                       # 项目文档
 │   ├── PRD.md                  # 产品需求文档
 │   ├── tech-decision.md        # 技术选型决策
 │   ├── feasibility.md          # 可行性分析
-│   └── research-report.md      # 调研报告
+│   ├── research-report.md      # 调研报告
+│   ├── integration-report.md   # 集成验收报告 V1.0.0
+│   └── integration-report-v1.1.md # 集成验收报告 V1.1.0
 ├── docker-compose.yml          # Docker 编排
 ├── Dockerfile                  # 后端镜像
 ├── Dockerfile.nginx            # Nginx 镜像
@@ -248,35 +270,35 @@ npm run dev  # 默认 http://localhost:5173
 ## 🧪 测试
 
 ```bash
-# 运行全部测试
-pytest
+# 运行全部测试（224 tests）
+docker compose --project-name deepresearch exec app pytest
 
-# 运行认证模块测试
-pytest tests/test_auth_*.py
+# 运行 Graph 单元测试（39 tests）
+docker compose --project-name deepresearch exec app pytest tests/unit/
 
-# 运行集成测试
-pytest tests/integration/
-
-# 运行覆盖率报告
-pytest --cov=src --cov-report=html
+# 运行集成测试（52 tests）
+docker compose --project-name deepresearch exec app pytest tests/integration/
 ```
 
 ## 🔧 API 概览
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/api/auth/register` | 用户注册 |
-| `POST` | `/api/auth/login` | 用户登录 |
-| `GET` | `/api/auth/me` | 获取当前用户信息 |
-| `POST` | `/api/auth/refresh` | 刷新 JWT Token |
-| `POST` | `/api/research` | 创建新研究 |
-| `GET` | `/api/research` | 获取研究历史列表 |
-| `GET` | `/api/research/{id}` | 获取研究详情 |
-| `PUT` | `/api/research/{id}/plan` | 修改研究计划 |
-| `POST` | `/api/research/{id}/execute` | 执行研究 |
-| `POST` | `/api/research/{id}/cancel` | 取消研究 |
-| `GET` | `/api/research/{id}/stream` | SSE 实时进度流 |
-| `DELETE` | `/api/research/{id}` | 删除研究记录 |
+| `POST` | `/api/v1/auth/register` | 用户注册 |
+| `POST` | `/api/v1/auth/login` | 用户登录 |
+| `GET` | `/api/v1/auth/me` | 获取当前用户信息 |
+| `POST` | `/api/v1/auth/refresh` | 刷新 JWT Token |
+| `POST` | `/api/v1/auth/ticket` | 签发 SSE Ticket |
+| `POST` | `/api/v1/research/new` | 发起新研究 |
+| `POST` | `/api/v1/research/{id}/plan/revise` | 修改研究计划 |
+| `POST` | `/api/v1/research/{id}/plan/confirm` | 确认计划并开始执行 |
+| `GET` | `/api/v1/research/{id}/stream?ticket=` | SSE 实时进度流 |
+| `GET` | `/api/v1/research/{id}` | 研究详情 |
+| `GET` | `/api/v1/research/{id}/report` | 研究报告 |
+| `GET` | `/api/v1/research/history` | 研究历史列表 |
+| `POST` | `/api/v1/research/{id}/cancel` | 中断研究 |
+| `DELETE` | `/api/v1/research/{id}` | 软删除研究 |
+| `GET` | `/api/v1/research/stats/tokens` | Token 消耗统计 |
 
 ## 📊 性能指标
 
@@ -291,3 +313,12 @@ pytest --cov=src --cov-report=html
 ## 📝 License
 
 MIT
+
+## 📋 版本历史
+
+| 版本 | 日期 | 说明 |
+|---|---|---|
+| **V1.1.0** | 2026-07 | LangGraph 迁移：StateGraph 全流程编排 + PostgresSaver checkpoint + interrupt() + Send API |
+| **V1.0.0** | 2026-06 | 初始发布：FastAPI + 纯 asyncio 编排 + Brave MCP + 前端工作台 |
+
+详见 [CHANGELOG.md](CHANGELOG.md)
