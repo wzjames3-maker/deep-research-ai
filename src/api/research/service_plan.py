@@ -39,6 +39,7 @@ def _build_sub_agent_results(research: Research) -> list[dict]:
     """Build sub-agent result items from model."""
     return [
         {
+            "subAgentId": sa.agent_name,
             "name": sa.agent_name,
             "goal": sa.agent_goal,
             "status": sa.status,
@@ -223,6 +224,7 @@ async def get_research_report(db: AsyncSession, user: User, research_id) -> dict
         "subAgentResults": _build_sub_agent_results(research),
         "totalTokens": research.total_tokens,
         "createdAt": research.created_at,
+        "startedAt": research.started_at,
         "completedAt": research.completed_at,
     }
 

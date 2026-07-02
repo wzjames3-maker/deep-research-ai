@@ -39,8 +39,10 @@ export default function NewResearchPage() {
       const code = error.response?.data?.code;
       if (status === 409 || code === "RESEARCH_IN_PROGRESS") {
         toast.error("当前有一个进行中的研究");
-      } else if (status === 500 || code === "PLAN_GENERATION_FAILED") {
+      } else if (status === 504 || code === "PLAN_GENERATION_TIMEOUT") {
         toast.error("计划生成超时，请重试");
+      } else if (status === 500 || code === "PLAN_GENERATION_FAILED") {
+        toast.error("计划生成失败，请检查网络后重试");
       } else {
         toast.error(error.response?.data?.message || "创建失败");
       }

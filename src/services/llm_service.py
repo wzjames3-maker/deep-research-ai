@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 import litellm
@@ -14,6 +15,16 @@ from src.errors import PlanGenerationFailedError, PlanGenerationTimeoutError
 logger = structlog.get_logger()
 
 litellm.drop_params = True
+
+LLM_MAX_RETRIES = 3
+LLM_RETRY_DELAYS = [1.0, 2.0, 4.0]
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Check if an LLM error is transient and worth retrying."""
+    if isinstance(exc, (litellm.exceptions.AuthenticationError, litellm.exceptions.BadRequestError)):
+        return False
+    return True
 
 
 def _log_usage(prompt: str, response_text: str, duration_ms: float, usage: dict | None = None) -> None:
@@ -42,7 +53,11 @@ def _extract_usage(response) -> int:
 
 
 async def _call_llm_raw(system_prompt: str, user_prompt: str, timeout: int | None = None) -> tuple[str, int]:
-    """Call LLM and return (raw_content, total_tokens) without JSON parsing."""
+    """Call LLM and return (raw_content, total_tokens) without JSON parsing.
+
+    Retries up to LLM_MAX_RETRIES times on transient errors (connection, 5xx).
+    Auth errors (401) and bad requests (400) fail immediately.
+    """
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -50,22 +65,44 @@ async def _call_llm_raw(system_prompt: str, user_prompt: str, timeout: int | Non
     start = time.time()
     effective_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT
 
-    try:
-        response = await litellm.acompletion(
-            model=settings.LLM_MODEL,
-            messages=messages,
-            api_key=settings.LLM_API_KEY,
-            api_base=settings.LLM_API_BASE,
-            timeout=effective_timeout,
-        )
-    except litellm.exceptions.Timeout:
+    last_exc: Exception | None = None
+    for attempt in range(1 + LLM_MAX_RETRIES):
+        try:
+            response = await litellm.acompletion(
+                model=settings.LLM_MODEL,
+                messages=messages,
+                api_key=settings.LLM_API_KEY,
+                api_base=settings.LLM_API_BASE,
+                timeout=effective_timeout,
+            )
+        except litellm.exceptions.Timeout:
+            duration_ms = (time.time() - start) * 1000
+            logger.warning("llm_timeout", prompt_len=len(user_prompt), duration_ms=round(duration_ms, 2))
+            raise PlanGenerationTimeoutError("LLM 调用超时")
+        except Exception as e:
+            last_exc = e
+            if not _is_retryable(e) or attempt >= LLM_MAX_RETRIES:
+                break
+            delay = LLM_RETRY_DELAYS[attempt]
+            logger.warning(
+                "llm_retry",
+                attempt=attempt + 1,
+                max_retries=LLM_MAX_RETRIES,
+                delay=delay,
+                error=str(e),
+            )
+            await asyncio.sleep(delay)
+            continue
+        break
+    else:
+        pass
+
+    if last_exc is not None:
         duration_ms = (time.time() - start) * 1000
-        logger.warning("llm_timeout", prompt_len=len(user_prompt), duration_ms=round(duration_ms, 2))
-        raise PlanGenerationTimeoutError("LLM 调用超时")
-    except Exception as e:
-        duration_ms = (time.time() - start) * 1000
-        logger.error("llm_error", error=str(e), duration_ms=round(duration_ms, 2))
-        raise PlanGenerationFailedError(f"LLM 调用失败: {e}")
+        logger.error("llm_error", error=str(last_exc), duration_ms=round(duration_ms, 2))
+        if isinstance(last_exc, litellm.exceptions.Timeout):
+            raise PlanGenerationTimeoutError("LLM 调用超时")
+        raise PlanGenerationFailedError(f"LLM 调用失败: {last_exc}")
 
     duration_ms = (time.time() - start) * 1000
     content = response.choices[0].message.content if response.choices else ""

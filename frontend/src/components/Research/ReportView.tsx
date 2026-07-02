@@ -106,17 +106,18 @@ export default function ReportView({ research, report }: ReportViewProps) {
     }
   }
 
-  // P1-4: Use completedAt - createdAt for elapsed time
+  // P1-4: Use completedAt - startedAt for elapsed time
   let elapsedText = "—";
-  if (report.completedAt && report.createdAt) {
-    const startMs = new Date(report.createdAt).getTime();
+  const startTime = report.startedAt || report.createdAt;
+  if (report.completedAt && startTime) {
+    const startMs = new Date(startTime).getTime();
     const endMs = new Date(report.completedAt).getTime();
     const elapsedMs = Math.max(0, endMs - startMs);
     const mins = Math.floor(elapsedMs / 60_000);
     const secs = Math.floor((elapsedMs % 60_000) / 1000);
     elapsedText = `${mins}:${secs.toString().padStart(2, "0")}`;
-  } else if (report.createdAt) {
-    const elapsedMs = Date.now() - new Date(report.createdAt).getTime();
+  } else if (startTime) {
+    const elapsedMs = Date.now() - new Date(startTime).getTime();
     const mins = Math.floor(elapsedMs / 60_000);
     const secs = Math.floor((elapsedMs % 60_000) / 1000);
     elapsedText = `${mins}:${secs.toString().padStart(2, "0")}`;

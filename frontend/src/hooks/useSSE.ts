@@ -57,6 +57,7 @@ export function useSSE(researchId: string | null, callbacks: SSECallbacks) {
         "sub_agent_round",
         "sub_agent_complete",
         "sub_agent_fail",
+        "aggregation_start",
         "report_complete",
         "error",
         "heartbeat",

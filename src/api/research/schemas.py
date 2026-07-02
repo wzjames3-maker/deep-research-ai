@@ -86,6 +86,7 @@ class ReportResponse(BaseModel):
     subAgentResults: list[SubAgentResultItem] = []
     totalTokens: int = 0
     createdAt: datetime | None = None
+    startedAt: datetime | None = None
     completedAt: datetime | None = None
 
 

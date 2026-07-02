@@ -17,6 +17,7 @@ from src.services.checkpointer import get_checkpointer, close_checkpointer
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    await _auto_migrate()
     cleanup_task = asyncio.create_task(cleanup_expired_entries())
     await get_checkpointer()  # Initialize LangGraph checkpoint tables
     yield
@@ -26,6 +27,33 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     await close_checkpointer()  # Close checkpoint connection pool
+
+
+async def _auto_migrate():
+    """Run Alembic migrations on startup to ensure DB schema is up to date."""
+    import subprocess
+    logger = structlog.get_logger()
+    try:
+        # Check if users table exists — if not, reset alembic version first
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users')")
+            )
+            table_exists = result.scalar()
+        if not table_exists:
+            subprocess.run(["python", "-m", "alembic", "stamp", "base"], capture_output=True, text=True, timeout=15)
+            logger.info("auto_migrate_stamped_base")
+
+        result = subprocess.run(
+            ["python", "-m", "alembic", "upgrade", "head"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            logger.info("auto_migrate_success", output=result.stdout.strip())
+        else:
+            logger.warning("auto_migrate_failed", stderr=result.stderr.strip())
+    except Exception as e:
+        logger.warning("auto_migrate_error", error=str(e))
 
 
 def create_app() -> FastAPI:

@@ -69,17 +69,18 @@ async def init_node(state: SubAgentState, config: RunnableConfig) -> dict:
     """Initialize sub-agent: mark running, push SSE start event."""
     research_id = str(state["research_id"])
     agent_def = state["agent_def"]
+    agent_name = agent_def.get("name", "Unknown")
 
     # Initialize cancel event for this research
     get_cancel_event(research_id)
 
-    # Push SSE start event
+    # Push SSE start event — use agent_name as unique subAgentId
     await sse_manager.push_event(
         state["research_id"],
         "sub_agent_start",
         {
-            "subAgentId": research_id,
-            "name": agent_def.get("name", "Unknown"),
+            "subAgentId": agent_name,
+            "name": agent_name,
             "goal": agent_def.get("goal", ""),
             "status": "running",
         },
@@ -189,7 +190,8 @@ async def analyze_node(state: SubAgentState, config: RunnableConfig) -> dict:
             state["research_id"],
             "sub_agent_round",
             {
-                "subAgentId": research_id,
+                "subAgentId": state["agent_def"].get("name", "Unknown"),
+                "name": state["agent_def"].get("name", "Unknown"),
                 "round": rounds_completed,
                 "searchQuery": state["search_direction"],
             },
@@ -242,11 +244,12 @@ async def complete_node(state: SubAgentState, config: RunnableConfig) -> dict:
     else:
         final_status = "completed"
 
-    # Push SSE complete/fail event
+    # Push SSE complete/fail event — use agent_name as unique subAgentId
+    agent_name = agent_def.get("name", "Unknown")
     event_type = "sub_agent_complete" if final_status == "completed" else "sub_agent_fail"
     event_data = {
-        "subAgentId": research_id,
-        "name": agent_def.get("name", "Unknown"),
+        "subAgentId": agent_name,
+        "name": agent_name,
         "status": final_status,
         "roundsUsed": state.get("rounds_completed", 0),
         "preview": state.get("findings", "")[:200],

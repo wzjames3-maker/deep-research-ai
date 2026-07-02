@@ -67,16 +67,17 @@ export default function ProgressDashboard({ research, onUpdate }: ProgressDashbo
   );
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
-  const [elapsed, setElapsed] = useState(formatElapsed(research.createdAt));
+  const elapsedStart = research.startedAt || research.createdAt;
+  const [elapsed, setElapsed] = useState(formatElapsed(elapsedStart));
   const [isAggregating, setIsAggregating] = useState(false);
 
   // Timer
   useEffect(() => {
     const interval = setInterval(() => {
-      setElapsed(formatElapsed(research.createdAt));
+      setElapsed(formatElapsed(research.startedAt || research.createdAt));
     }, 1000);
     return () => clearInterval(interval);
-  }, [research.createdAt]);
+  }, [research.startedAt, research.createdAt]);
 
   // Sync agents when research changes
   useEffect(() => {
@@ -92,14 +93,21 @@ export default function ProgressDashboard({ research, onUpdate }: ProgressDashbo
     });
   }, [research.researchId, onUpdate]);
 
-  // P1-7: Use subAgentId for matching agents (not name, which may be duplicated)
+  // Poll research data every 10s as safety net (SSE events may be lost)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      reloadResearch();
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [reloadResearch]);
+
+  // P1-7: Match by subAgentId (unique per agent, set from API + SSE)
   useSSE(research.researchId, {
     onSubAgentStart: (data) => {
       const agentId = data.subAgentId as string;
-      const name = data.name as string;
       setAgents((prev) =>
         prev.map((a) =>
-          (a.subAgentId && a.subAgentId === agentId) || a.name === name
+          a.subAgentId === agentId || a.name === agentId
             ? { ...a, status: "running", subAgentId: agentId }
             : a
         )
@@ -110,7 +118,7 @@ export default function ProgressDashboard({ research, onUpdate }: ProgressDashbo
       const round = data.round as number;
       setAgents((prev) =>
         prev.map((a) =>
-          a.subAgentId === agentId
+          a.subAgentId === agentId || a.name === agentId
             ? { ...a, round }
             : a
         )
@@ -118,13 +126,12 @@ export default function ProgressDashboard({ research, onUpdate }: ProgressDashbo
     },
     onSubAgentComplete: (data) => {
       const agentId = data.subAgentId as string;
-      const name = data.name as string;
       const preview = (data.preview as string) || "";
       const tokenUsed = (data.tokenUsed as number) || 0;
       reloadResearch();
       setAgents((prev) =>
         prev.map((a) =>
-          (a.subAgentId && a.subAgentId === agentId) || a.name === name
+          a.subAgentId === agentId || a.name === agentId
             ? { ...a, status: "completed", findings: preview.slice(0, 200), tokenUsed }
             : a
         )
@@ -132,11 +139,10 @@ export default function ProgressDashboard({ research, onUpdate }: ProgressDashbo
     },
     onSubAgentFail: (data) => {
       const agentId = data.subAgentId as string;
-      const name = data.name as string;
       const errorMsg = (data.error as string) || "未知错误";
       setAgents((prev) =>
         prev.map((a) =>
-          (a.subAgentId && a.subAgentId === agentId) || a.name === name
+          a.subAgentId === agentId || a.name === agentId
             ? { ...a, status: "failed", errorMessage: errorMsg }
             : a
         )
@@ -226,7 +232,7 @@ export default function ProgressDashboard({ research, onUpdate }: ProgressDashbo
 
                 {agent.status === "running" && agent.round && (
                   <div className="text-xs text-muted-foreground">
-                    <span>第 {agent.round}/2 轮</span>
+                    <span>第 {agent.round}/4 轮</span>
                   </div>
                 )}
 

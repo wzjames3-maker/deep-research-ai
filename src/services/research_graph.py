@@ -10,6 +10,7 @@ Task 40: dispatch_node, aggregate_node, partial_aggregate_node, compile_research
 """
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -320,6 +321,8 @@ async def _run_sub_agents(
                 "findings": result.get("findings", ""),
                 "token_used": result.get("token_used", 0),
                 "has_error": result.get("has_error", False),
+                "visited_urls": result.get("visited_urls", []),
+                "rounds_completed": result.get("rounds_completed", 0),
             })
         except Exception as e:
             logger.error("sub_agent_execution_error", agent=agent_def.get("name"), error=str(e))
@@ -339,6 +342,7 @@ async def dispatch_node(state: ResearchState, config: RunnableConfig) -> dict:
     Calls _run_sub_agents which executes each sub-agent subgraph.
     Returns state update with accumulated sub_agent_results.
     """
+    db_session_factory = config["configurable"]["db_session_factory"]
     plan = state["plan"]
     research_id = state["research_id"]
     topic = state["topic"]
@@ -356,6 +360,27 @@ async def dispatch_node(state: ResearchState, config: RunnableConfig) -> dict:
         mcp_client=mcp,
         llm_svc=_get_llm_service(),
     )
+
+    # Persist sub-agent results to DB
+    async with db_session_factory() as session:
+        sa_repo = SubAgentResultRepository(session)
+        db_results = await sa_repo.find_by_research(research_id)
+        result_by_name = {r.agent_name: r for r in db_results}
+
+        for r in results:
+            name = r.get("name", "")
+            db_record = result_by_name.get(name)
+            if db_record:
+                db_record.status = r.get("status", "completed")
+                db_record.findings_text = r.get("findings", "")
+                db_record.token_used = r.get("token_used", 0)
+                db_record.visited_urls = r.get("visited_urls", [])
+                db_record.rounds_completed = r.get("rounds_completed", 0)
+                db_record.completed_at = datetime.now(timezone.utc)
+                if r.get("has_error"):
+                    db_record.error_message = "Search or analysis failed"
+
+        await session.commit()
 
     # Calculate total tokens from sub-agents
     total_sa_tokens = sum(r.get("token_used", 0) for r in results)
@@ -406,6 +431,7 @@ async def aggregate_node(state: ResearchState, config: RunnableConfig) -> dict:
             if research:
                 research.status = "failed"
                 research.error_message = "All sub-agents failed"
+                research.completed_at = datetime.now(timezone.utc)
                 await session.commit()
 
         await sse_manager.push_event(
@@ -450,6 +476,7 @@ async def aggregate_node(state: ResearchState, config: RunnableConfig) -> dict:
             research.report_markdown = report
             research.total_tokens = total_tokens
             research.status = "completed"
+            research.completed_at = datetime.now(timezone.utc)
             await session.commit()
 
     # Push SSE: report complete
@@ -492,6 +519,7 @@ async def partial_aggregate_node(state: ResearchState, config: RunnableConfig) -
             if research:
                 research.status = "cancelled"
                 research.error_message = "Cancelled before any sub-agent completed"
+                research.completed_at = datetime.now(timezone.utc)
                 await session.commit()
 
         await sse_manager.push_event(
@@ -532,6 +560,7 @@ async def partial_aggregate_node(state: ResearchState, config: RunnableConfig) -
             research.report_markdown = report
             research.total_tokens = total_tokens
             research.status = "cancelled"
+            research.completed_at = datetime.now(timezone.utc)
             await session.commit()
 
     await sse_manager.push_event(

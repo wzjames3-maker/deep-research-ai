@@ -121,8 +121,6 @@ async def test_engine():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
 
@@ -130,6 +128,11 @@ async def test_engine():
 async def _cleanup_db(test_engine):
     """Truncate all tables after each test for data isolation."""
     yield
+    # Force GC to close NullPool's orphaned asyncpg connections (which hold
+    # Postgres locks) before TRUNCATE needs ACCESS EXCLUSIVE lock.
+    gc.collect()
+    gc.collect()
+    await asyncio.sleep(0)
     async with test_engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             await conn.execute(text(f'TRUNCATE TABLE "{table.name}" CASCADE'))
@@ -138,16 +141,11 @@ async def _cleanup_db(test_engine):
 @pytest_asyncio.fixture
 async def db_session(test_engine):
     async_session = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
-    # Don't use `async with` — it calls session.close() during teardown which
-    # may run after the event loop has begun shutting down, causing
-    # "attached to a different loop" errors.  Instead, yield the session and
-    # let the _gc_barrier fixture (below) clean up connections safely.
     session = async_session()
     yield session
-    # Roll back any uncommitted work so the connection is in a clean state
-    # before the barrier forces GC.
     try:
         await session.rollback()
+        await session.close()
     except Exception:
         pass
 
@@ -160,6 +158,7 @@ async def test_db(test_engine):
     yield session
     try:
         await session.rollback()
+        await session.close()
     except Exception:
         pass
 

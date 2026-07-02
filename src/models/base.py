@@ -7,7 +7,7 @@ engine = create_async_engine(
     echo=False,
     pool_size=10,
     max_overflow=5,
-    connect_args={"server_settings": {"idle_in_transaction_session_timeout": "5000"}},
+    connect_args={"server_settings": {"idle_in_transaction_session_timeout": "300000"}},
 )
 
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

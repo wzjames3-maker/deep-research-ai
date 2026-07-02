@@ -88,6 +88,7 @@ export interface ResearchReport {
   subAgentResults: SubAgentResult[];
   totalTokens: number;
   createdAt: string | null;
+  startedAt: string | null;
   completedAt: string | null;
 }
 

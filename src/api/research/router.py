@@ -136,10 +136,65 @@ async def stream_research(
     if research.user_id != user_id:
         raise ForbiddenError("无权访问该研究")
 
+    # Cache values before the db session is finalized when the handler returns.
+    # (session.close() expires all loaded objects; generator runs after finalization.)
+    research_status = research.status
+
+    # Snapshot of current sub-agent states (cached before session close)
+    from src.repos.sub_agent_result_repo import SubAgentResultRepository
+    sa_repo = SubAgentResultRepository(db)
+    sa_results = await sa_repo.find_by_research(research_id)
+    snapshot_events: list[dict] = []
+    for sa in sa_results:
+        if sa.status == "running":
+            snapshot_events.append(("sub_agent_start", {
+                "subAgentId": sa.agent_name,
+                "name": sa.agent_name,
+                "goal": sa.agent_goal,
+                "status": "running",
+            }))
+        elif sa.status == "completed":
+            snapshot_events.append(("sub_agent_start", {
+                "subAgentId": sa.agent_name,
+                "name": sa.agent_name,
+                "goal": sa.agent_goal,
+                "status": "running",
+            }))
+            snapshot_events.append(("sub_agent_complete", {
+                "subAgentId": sa.agent_name,
+                "name": sa.agent_name,
+                "status": "completed",
+                "preview": (sa.findings_text or "")[:200],
+                "tokenUsed": sa.token_used,
+                "roundsUsed": sa.rounds_completed,
+            }))
+        elif sa.status == "failed":
+            snapshot_events.append(("sub_agent_start", {
+                "subAgentId": sa.agent_name,
+                "name": sa.agent_name,
+                "goal": sa.agent_goal,
+                "status": "running",
+            }))
+            snapshot_events.append(("sub_agent_fail", {
+                "subAgentId": sa.agent_name,
+                "name": sa.agent_name,
+                "status": "failed",
+                "error": sa.error_message or "Search or analysis failed",
+            }))
+
+    if research_status in ("completed", "cancelled"):
+        snapshot_events.append(("report_complete", {
+            "researchId": str(research_id),
+            "status": research_status,
+        }))
+
     async def event_generator():
         queue = await sse_manager.connect(research_id, user_id)
         try:
-            # P2-1: 不在此处推送 plan_confirm，仅由 exec_engine 推送
+            # Send cached snapshot
+            for event_type, data in snapshot_events:
+                await sse_manager.push_event(research_id, event_type, data)
+
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15.0)
