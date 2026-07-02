@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     MCP_TIMEOUT: int = 30
     SUB_AGENT_TIMEOUT: int = 300
     TAVILY_API_KEY: str | None = None
+    SEARCH_MAX_RESULTS: int = 10
 
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "console"

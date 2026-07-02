@@ -9,6 +9,8 @@ from src.services.prompts import (
     PLAN_REVISION_PROMPT,
     SUB_AGENT_SEARCH_PROMPT,
     AGGREGATE_PROMPT,
+    RELEVANCE_FILTER_PROMPT,
+    QUERY_EXPANSION_PROMPT,
 )
 from src.errors import PlanGenerationFailedError, PlanGenerationTimeoutError
 
@@ -200,7 +202,7 @@ async def sub_agent_search(
     return {
         "findings": findings + "\n\n" + search_results,
         "sufficient": True,
-        "new_keywords": "",
+        "new_search_query": "",
     }, total_tokens
 
 
@@ -224,3 +226,93 @@ async def aggregate_report(topic: str, plan: list[dict], sub_agent_findings: str
         content = content[:max_len] + truncation_msg
 
     return content, total_tokens
+
+
+async def filter_relevance(
+    results: list[dict],
+    topic: str,
+    direction: str,
+    min_score: int = 5,
+) -> tuple[list[dict], int]:
+    """Filter search results by relevance using LLM scoring.
+
+    Args:
+        results: List of dicts with 'title', 'url', 'snippet' keys
+        topic: Research topic
+        direction: Search direction
+        min_score: Minimum score (0-10) to keep a result
+
+    Returns:
+        (filtered_results, token_used) — only results scoring >= min_score
+    """
+    if not results:
+        return [], 0
+
+    # Build results text for prompt
+    results_text = "\n\n".join(
+        f"[{i}] {r.get('title', 'N/A')}\n"
+        f"    URL: {r.get('url', '')}\n"
+        f"    {r.get('snippet', '')}"
+        for i, r in enumerate(results)
+    )
+
+    prompt = RELEVANCE_FILTER_PROMPT.format(
+        topic=topic, direction=direction, results=results_text,
+    )
+
+    scored, total_tokens = await _call_llm(
+        "你是一个 JSON 格式输出的搜索结果评估助手。", prompt,
+    )
+
+    if not isinstance(scored, list):
+        logger.warning("filter_relevance_parse_failed", fallback="keep_all")
+        return results, total_tokens
+
+    # Build score map: index -> score
+    score_map: dict[int, int] = {}
+    for item in scored:
+        if isinstance(item, dict) and "index" in item and "score" in item:
+            score_map[item["index"]] = item.get("score", 0)
+
+    # Filter: keep results with score >= min_score
+    # If a result has no score (LLM didn't evaluate it), keep it
+    filtered = [
+        r for i, r in enumerate(results)
+        if score_map.get(i, min_score) >= min_score
+    ]
+
+    logger.info(
+        "filter_relevance",
+        input_count=len(results),
+        output_count=len(filtered),
+        scores=score_map,
+    )
+
+    return filtered, total_tokens
+
+
+async def expand_query(
+    topic: str,
+    direction: str,
+) -> tuple[list[str], int]:
+    """Expand a search direction into multiple query variants.
+
+    Returns:
+        (queries, token_used) — original direction + 2 variants
+    """
+    prompt = QUERY_EXPANSION_PROMPT.format(topic=topic, direction=direction)
+    result, total_tokens = await _call_llm(
+        "你是一个 JSON 格式输出的搜索策略助手。", prompt,
+    )
+
+    queries = [direction]  # Always include original
+
+    if isinstance(result, dict) and "queries" in result:
+        variants = result["queries"]
+        if isinstance(variants, list):
+            for q in variants[:2]:  # Max 2 variants
+                if isinstance(q, str) and q.strip():
+                    queries.append(q.strip())
+
+    logger.info("expand_query", original=direction, variants=queries)
+    return queries, total_tokens

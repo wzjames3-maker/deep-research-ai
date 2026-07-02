@@ -49,6 +49,7 @@ class SubAgentState(TypedDict):
     rounds_completed: int
     sufficient: bool
     token_used: int
+    filter_tokens: int  # transient: LLM filter tokens, reset per round
     status: str
     has_error: bool
     search_results: list  # latest round results (transient, not persisted)

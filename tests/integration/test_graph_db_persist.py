@@ -32,7 +32,7 @@ def _make_mock_llm():
     llm.revise_plan = AsyncMock(return_value=(MOCK_PLAN_3, 300))
     llm.aggregate_report = AsyncMock(return_value=("# Test Report", 200))
     llm.sub_agent_search = AsyncMock(return_value={
-        "sufficient": True, "findings": "test findings", "new_keywords": "",
+        "sufficient": True, "findings": "test findings", "new_search_query": "",
     })
     return llm
 
@@ -247,7 +247,7 @@ async def test_sub_agent_round_sse_includes_name():
     with patch.object(sse_manager, "push_event", side_effect=capture_push):
         mock_llm = MagicMock()
         mock_llm.sub_agent_search = AsyncMock(return_value={
-            "sufficient": True, "findings": "test", "new_keywords": "",
+            "sufficient": True, "findings": "test", "new_search_query": "",
         })
 
         state = {

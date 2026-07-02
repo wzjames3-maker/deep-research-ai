@@ -1,11 +1,16 @@
 """Sub-agent Subgraph implementation (LangGraph StateGraph).
 
 This module implements the sub-agent search loop:
-START → init → search → dedup → analyze → (conditional) → complete → END
+START → init → search → dedup → filter → analyze → (conditional) → complete → END
 
 The conditional edge routes back to 'search' if:
 - sufficient=false AND rounds_completed < 4
 Otherwise routes to 'complete'.
+
+Key features:
+- Query expansion: first round expands search direction into 2-3 variants
+- Relevance filtering: LLM scores results 0-10, filters low-quality noise
+- Smart direction update: LLM generates targeted new_search_query per round
 """
 
 import asyncio
@@ -98,7 +103,11 @@ async def init_node(state: SubAgentState, config: RunnableConfig) -> dict:
 
 
 async def search_node(state: SubAgentState, config: RunnableConfig) -> dict:
-    """Call MCP search with current search_direction."""
+    """Call MCP search with current search_direction.
+
+    On the first round (rounds_completed == 0), expands the query into
+    multiple variants for broader coverage.
+    """
     research_id = str(state["research_id"])
 
     # Check cancel signal before searching
@@ -109,10 +118,45 @@ async def search_node(state: SubAgentState, config: RunnableConfig) -> dict:
 
     mcp_client = get_mcp_client()
     search_direction = state["search_direction"]
+    max_results = settings.SEARCH_MAX_RESULTS
 
     try:
-        results = await mcp_client.search(search_direction)
-        return {"search_results": results, "status": "running"}
+        # On first round, expand query for broader coverage
+        queries = [search_direction]
+        if state.get("rounds_completed", 0) == 0 and _llm_service_override is None:
+            try:
+                expanded, _ = await llm_service.expand_query(
+                    topic=state["topic"], direction=search_direction,
+                )
+                if expanded:
+                    queries = expanded
+            except Exception as e:
+                logger.warning("query_expansion_failed", error=str(e), fallback="original")
+
+        # Search all query variants and merge results
+        all_results: list = []
+        seen_urls: set[str] = set()
+        for query in queries:
+            try:
+                results = await mcp_client.search(query, max_results=max_results)
+                for r in results:
+                    normalized = _normalize_url(r.url)
+                    if normalized not in seen_urls:
+                        seen_urls.add(normalized)
+                        all_results.append(r)
+            except Exception as e:
+                logger.warning("search_variant_failed", query=query, error=str(e))
+
+        if not all_results:
+            logger.warning("sub_agent_no_results", research_id=research_id, queries=len(queries))
+
+        logger.info(
+            "search_node_expanded",
+            research_id=research_id,
+            queries=len(queries),
+            total_results=len(all_results),
+        )
+        return {"search_results": all_results, "status": "running"}
     except Exception as e:
         logger.error("sub_agent_search_failed", research_id=research_id, error=str(e))
         return {"status": "failed", "has_error": True, "search_results": []}
@@ -136,6 +180,52 @@ async def dedup_node(state: SubAgentState, config: RunnableConfig) -> dict:
         "search_results": new_results,
         "visited_urls": visited_urls,
     }
+
+
+async def filter_node(state: SubAgentState, config: RunnableConfig) -> dict:
+    """Relevance filter: use LLM to score and filter low-quality results.
+
+    Skipped when using mock LLM (tests) or when results are few (<=3).
+    """
+    search_results: list[SearchResult] = state.get("search_results", [])
+
+    # Skip filtering for tests (mock LLM) or very few results
+    if _llm_service_override is not None or len(search_results) <= 3:
+        return {}
+
+    # Convert to dicts for LLM scoring
+    result_dicts = [
+        {"title": r.title, "url": r.url, "snippet": r.snippet}
+        for r in search_results
+    ]
+
+    try:
+        filtered_dicts, tokens = await llm_service.filter_relevance(
+            results=result_dicts,
+            topic=state["topic"],
+            direction=state["search_direction"],
+        )
+
+        # Build filtered SearchResult list
+        # Match by URL to reconstruct SearchResult objects
+        filtered_urls = {d["url"] for d in filtered_dicts}
+        filtered_results = [r for r in search_results if r.url in filtered_urls]
+
+        logger.info(
+            "filter_node",
+            before=len(search_results),
+            after=len(filtered_results),
+            tokens=tokens,
+        )
+
+        # Never filter down to 0 — keep originals if all filtered out
+        if not filtered_results:
+            return {"filter_tokens": tokens}
+
+        return {"search_results": filtered_results, "filter_tokens": tokens}
+    except Exception as e:
+        logger.warning("filter_node_failed", error=str(e), fallback="keep_all")
+        return {}
 
 
 async def analyze_node(state: SubAgentState, config: RunnableConfig) -> dict:
@@ -183,7 +273,8 @@ async def analyze_node(state: SubAgentState, config: RunnableConfig) -> dict:
         rounds_completed = state.get("rounds_completed", 0) + 1
         new_findings = analysis.get("findings", state.get("findings", ""))
         sufficient = analysis.get("sufficient", False)
-        new_query = analysis.get("new_search_query")
+        # Support both field names for backward compatibility
+        new_query = analysis.get("new_search_query") or analysis.get("new_keywords")
 
         # Push SSE round event
         await sse_manager.push_event(
@@ -201,7 +292,8 @@ async def analyze_node(state: SubAgentState, config: RunnableConfig) -> dict:
             "findings": new_findings,
             "sufficient": sufficient,
             "rounds_completed": rounds_completed,
-            "token_used": state.get("token_used", 0) + tokens,
+            "token_used": state.get("token_used", 0) + tokens + state.get("filter_tokens", 0),
+            "filter_tokens": 0,  # Reset after accumulating
         }
 
         # Update search direction if LLM provided new query
@@ -299,6 +391,7 @@ def build_sub_agent_graph(
     builder.add_node("init", init_node)
     builder.add_node("search", search_node)
     builder.add_node("dedup", dedup_node)
+    builder.add_node("filter", filter_node)
     builder.add_node("analyze", analyze_node)
     builder.add_node("complete", complete_node)
 
@@ -308,7 +401,8 @@ def build_sub_agent_graph(
     # Add edges
     builder.add_edge("init", "search")
     builder.add_edge("search", "dedup")
-    builder.add_edge("dedup", "analyze")
+    builder.add_edge("dedup", "filter")
+    builder.add_edge("filter", "analyze")
     builder.add_conditional_edges(
         "analyze",
         route_after_analyze,
