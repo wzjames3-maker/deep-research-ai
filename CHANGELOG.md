@@ -1,5 +1,34 @@
 # Changelog
 
+## V1.1.0 (2026-07-01) — LangGraph Orchestration
+
+### Research Module (Refactor)
+- **LangGraph StateGraph** full-flow orchestration replaces pure asyncio
+  - `plan_generation_node` → `human_review_node`(interrupt) → `dispatch_node`(Send API) → `aggregate_node`
+  - Sub-agent subgraph: `search → dedup → analyze → conditional` loop
+- **PostgresSaver checkpointer** for graph state persistence + crash recovery
+- **interrupt() Human-in-the-loop**: Plan-phase pause/resume via `Command(resume=...)`
+- **Send API parallel dispatch**: Native fan-out to sub-agent subgraphs
+- **Hybrid cancel mechanism**: `update_state` (persistent) + `asyncio.Event` (real-time)
+- `exec_engine.py` rewritten from 437 → 159 lines (thin graph wrapper)
+- `service_plan.py` updated: create/revise/confirm → graph invoke/resume
+
+### Tests
+- **224 tests pass** (+39 new graph-specific tests)
+- 33 unit tests for graph nodes (sub_agent, research, checkpoint, interrupt, cancel)
+- 52 integration tests (including LangGraph E2E + crash recovery)
+
+### Infrastructure
+- `idle_in_transaction_session_timeout=5s` on DB engines to prevent zombie transactions
+- Test isolation fixes for LangGraph module-level globals
+
+### Spec
+- 7 spec files updated (specs/research/00~08) for LangGraph migration
+- 16 task files (tasks/phase-7-lg/33~48.md)
+- `docs/tech-decision.md` decision 4: LangGraph confirmed as sole orchestration
+
+---
+
 ## V1.0.0 (2026-06-30) — Initial Release
 
 ### Auth Module
