@@ -94,16 +94,28 @@ def _reset_graph_singletons():
     """Reset graph and checkpointer singletons between tests."""
     import src.services.research_graph as rg
     import src.services.checkpointer as cp
+    import src.services.sub_agent_graph as sag
     rg._compiled_graph = None
     cp._checkpointer = None
+    sag._mcp_client = None
+    sag._llm_service_override = None
+    sag.cancel_signals.clear()
     yield
     rg._compiled_graph = None
     cp._checkpointer = None
+    sag._mcp_client = None
+    sag._llm_service_override = None
+    sag.cancel_signals.clear()
 
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
-    engine = create_async_engine(settings.DATABASE_URL, echo=False, poolclass=NullPool)
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        poolclass=NullPool,
+        connect_args={"server_settings": {"idle_in_transaction_session_timeout": "3000"}},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield engine

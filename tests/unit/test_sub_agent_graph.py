@@ -28,6 +28,47 @@ from src.services.mcp_client import SearchResult
 # Fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _cleanup_sub_agent_globals():
+    """Reset module-level globals between tests to prevent state leakage."""
+    from src.services import sub_agent_graph as sag
+    old_mcp = sag._mcp_client
+    old_llm = sag._llm_service_override
+    old_signals = dict(sag.cancel_signals)
+    sag._mcp_client = None
+    sag._llm_service_override = None
+    sag.cancel_signals.clear()
+    yield
+    sag._mcp_client = old_mcp
+    sag._llm_service_override = old_llm
+    sag.cancel_signals.clear()
+    sag.cancel_signals.update(old_signals)
+
+@pytest.fixture(autouse=True)
+def _cleanup_sub_agent_globals():
+    """Reset module-level globals between tests to prevent state leakage."""
+    from src.services import sub_agent_graph as sag
+    sag._mcp_client = None
+    sag._llm_service_override = None
+    sag.cancel_signals.clear()
+    yield
+    sag._mcp_client = None
+    sag._llm_service_override = None
+    sag.cancel_signals.clear()
+
+@pytest.fixture(autouse=True)
+def _cleanup_sub_agent_globals():
+    """Reset module-level globals between tests to prevent state leakage."""
+    from src.services import sub_agent_graph as _sag
+    _sag._mcp_client = None
+    _sag._llm_service_override = None
+    _sag.cancel_signals.clear()
+    yield
+    _sag._mcp_client = None
+    _sag._llm_service_override = None
+    _sag.cancel_signals.clear()
+
+
 @pytest.fixture
 def mock_mcp_client():
     """Mock MCP search client."""
