@@ -25,6 +25,7 @@ from src.services.sse_manager import sse_manager
 from src.repos.research_repo import ResearchRepository
 from src.repos.sub_agent_result_repo import SubAgentResultRepository
 from src.repos.plan_feedback_repo import ResearchPlanFeedbackRepository
+from src.repos.citation_repo import CitationRepository
 from src.models.research import Research
 
 import structlog
@@ -403,6 +404,44 @@ def check_cancel(state: ResearchState) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Citation helpers
+# ---------------------------------------------------------------------------
+
+def _collect_citations(results: list[dict]) -> tuple[list[dict], str]:
+    """Collect unique URLs from sub-agent results and build citation_map.
+
+    Returns:
+        (citation_records, citation_map_text)
+        citation_records: list of dicts ready for CitationRepository.bulk_create
+        citation_map_text: formatted string for LLM prompt
+    """
+    seen_urls: dict[str, int] = {}  # url -> citation_number
+    records: list[dict] = []
+
+    for r in results:
+        agent_name = r.get("name", "")
+        for url in r.get("visited_urls", []):
+            if not url or url in seen_urls:
+                continue
+            num = len(seen_urls) + 1
+            seen_urls[url] = num
+            records.append({
+                "citation_number": num,
+                "url": url,
+                "title": "",
+                "snippet": "",
+                "source_agent": agent_name,
+            })
+
+    if not records:
+        return [], ""
+
+    map_lines = [f"[{rec['citation_number']}] {rec['url']}" for rec in records]
+    citation_map_text = "\n".join(map_lines)
+    return records, citation_map_text
+
+
+# ---------------------------------------------------------------------------
 # Aggregate Node
 # ---------------------------------------------------------------------------
 
@@ -458,9 +497,14 @@ async def aggregate_node(state: ResearchState, config: RunnableConfig) -> dict:
             findings_parts.append(f"## {name}\n\n{findings}")
     findings_text = "\n\n---\n\n".join(findings_parts)
 
+    # Build citation map from all sub-agent URLs
+    citation_records, citation_map = _collect_citations(completed)
+
     # Call LLM to aggregate
     llm = _get_llm_service()
-    report, report_tokens = await llm.aggregate_report(topic, plan, findings_text)
+    report, report_tokens = await llm.aggregate_report(
+        topic, plan, findings_text, citation_map=citation_map,
+    )
 
     # Truncate to 50000 chars (AC-RES-020)
     if len(report) > 50000:
@@ -477,6 +521,12 @@ async def aggregate_node(state: ResearchState, config: RunnableConfig) -> dict:
             research.total_tokens = total_tokens
             research.status = "completed"
             research.completed_at = datetime.now(timezone.utc)
+
+            # Save citation records
+            if citation_records:
+                cit_repo = CitationRepository(session)
+                await cit_repo.bulk_create(research_id, citation_records)
+
             await session.commit()
 
     # Push SSE: report complete
@@ -545,8 +595,13 @@ async def partial_aggregate_node(state: ResearchState, config: RunnableConfig) -
             findings_parts.append(f"## {name}\n\n{findings}")
     findings_text = "\n\n---\n\n".join(findings_parts)
 
+    # Build citation map from completed sub-agent URLs
+    citation_records, citation_map = _collect_citations(completed)
+
     llm = _get_llm_service()
-    report, report_tokens = await llm.aggregate_report(topic, plan, findings_text)
+    report, report_tokens = await llm.aggregate_report(
+        topic, plan, findings_text, citation_map=citation_map,
+    )
 
     if len(report) > 50000:
         report = report[:50000 - 20] + "\n\n...(report truncated)"
@@ -561,6 +616,12 @@ async def partial_aggregate_node(state: ResearchState, config: RunnableConfig) -
             research.total_tokens = total_tokens
             research.status = "cancelled"
             research.completed_at = datetime.now(timezone.utc)
+
+            # Save citation records
+            if citation_records:
+                cit_repo = CitationRepository(session)
+                await cit_repo.bulk_create(research_id, citation_records)
+
             await session.commit()
 
     await sse_manager.push_event(

@@ -206,12 +206,20 @@ async def sub_agent_search(
     }, total_tokens
 
 
-async def aggregate_report(topic: str, plan: list[dict], sub_agent_findings: str) -> tuple[str, int]:
-    """Generate aggregate report. Returns (markdown_report, token_used)."""
+async def aggregate_report(
+    topic: str,
+    plan: list[dict],
+    sub_agent_findings: str,
+    citation_map: str = "",
+) -> tuple[str, int]:
+    """Generate aggregate report with citation tracking. Returns (markdown_report, token_used)."""
+    if not citation_map:
+        citation_map = "（无可用引用来源）"
     prompt = AGGREGATE_PROMPT.format(
         plan=json.dumps(plan, ensure_ascii=False, indent=2),
         sub_agent_findings=sub_agent_findings,
         topic=topic,
+        citation_map=citation_map,
     )
 
     content, total_tokens = await _call_llm_raw(

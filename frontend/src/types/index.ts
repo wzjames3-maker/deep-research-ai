@@ -77,6 +77,15 @@ export interface Research {
   completedAt: string | null;
 }
 
+/* ===== Citation ===== */
+export interface Citation {
+  citationNumber: number;
+  url: string;
+  title: string;
+  snippet: string;
+  sourceAgent: string;
+}
+
 /* ===== Report (extends Research with reportMarkdown) ===== */
 export interface ResearchReport {
   researchId: string;
@@ -86,6 +95,7 @@ export interface ResearchReport {
   plan: Record<string, unknown> | null;
   reportMarkdown: string | null;
   subAgentResults: SubAgentResult[];
+  citations: Citation[];
   totalTokens: number;
   createdAt: string | null;
   startedAt: string | null;

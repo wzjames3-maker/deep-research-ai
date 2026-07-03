@@ -37,6 +37,13 @@ export const researchApi = {
     return resp.data;
   },
 
+  async exportPdf(id: string): Promise<Blob> {
+    const resp = await client.get(`/research/${id}/export/pdf`, {
+      responseType: "blob",
+    });
+    return resp.data;
+  },
+
   async listHistory(
     page = 1,
     pageSize = 20

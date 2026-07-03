@@ -17,6 +17,7 @@ class SearchResult:
     url: str
     title: str
     snippet: str
+    extracted_content: str = ""  # Full page text from content extractor
 
 
 def _normalize_url(url: str) -> str:

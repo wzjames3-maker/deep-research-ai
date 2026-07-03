@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str | None = None
     SEARCH_MAX_RESULTS: int = 10
 
+    # Content extraction
+    CONTENT_FETCH_ENABLED: bool = True
+    CONTENT_FETCH_TIMEOUT: int = 10
+    CONTENT_FETCH_MAX_CONCURRENT: int = 5
+    CONTENT_FETCH_MAX_CHARS: int = 8000
+
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "console"
 

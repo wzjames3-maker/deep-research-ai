@@ -14,6 +14,7 @@ from src.models.research import Research
 from src.models.user import User
 from src.repos.research_repo import ResearchRepository
 from src.repos.plan_feedback_repo import ResearchPlanFeedbackRepository
+from src.repos.citation_repo import CitationRepository
 
 logger = structlog.get_logger()
 
@@ -214,6 +215,20 @@ async def get_research_report(db: AsyncSession, user: User, research_id) -> dict
     fb_repo = ResearchPlanFeedbackRepository(db)
     revision_count = await fb_repo.count_by_research(research.id)
 
+    # Query citations
+    cit_repo = CitationRepository(db)
+    citations = await cit_repo.find_by_research(research.id)
+    citation_items = [
+        {
+            "citationNumber": c.citation_number,
+            "url": c.url,
+            "title": c.title,
+            "snippet": c.snippet,
+            "sourceAgent": c.source_agent,
+        }
+        for c in citations
+    ]
+
     return {
         "researchId": str(research.id),
         "topic": research.topic,
@@ -222,6 +237,7 @@ async def get_research_report(db: AsyncSession, user: User, research_id) -> dict
         "plan": _build_plan_response(research.plan_json) if research.plan_json else None,
         "reportMarkdown": research.report_markdown,
         "subAgentResults": _build_sub_agent_results(research),
+        "citations": citation_items,
         "totalTokens": research.total_tokens,
         "createdAt": research.created_at,
         "startedAt": research.started_at,

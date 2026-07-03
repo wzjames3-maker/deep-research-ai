@@ -42,9 +42,11 @@ class TestPrompts:
             topic="AI 安全",
             plan="[]",
             sub_agent_findings="发现文本",
+            citation_map="[1] https://example.com",
         )
         assert "AI 安全" in prompt
         assert "发现文本" in prompt
+        assert "[1] https://example.com" in prompt
 
 
 class TestJsonParsing:

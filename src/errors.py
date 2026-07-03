@@ -104,6 +104,11 @@ class ServiceUnavailableError(AppException):
     code = "SERVICE_UNAVAILABLE"
 
 
+class ExportFailedError(AppException):
+    http_status = 500
+    code = "EXPORT_FAILED"
+
+
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     return JSONResponse(
         status_code=exc.http_status,

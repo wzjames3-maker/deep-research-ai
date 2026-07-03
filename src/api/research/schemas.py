@@ -62,6 +62,14 @@ class SubAgentResultItem(BaseModel):
     tokenUsed: int
 
 
+class CitationItem(BaseModel):
+    citationNumber: int
+    url: str
+    title: str = ""
+    snippet: str = ""
+    sourceAgent: str = ""
+
+
 class ResearchResponse(BaseModel):
     researchId: UUID
     topic: str
@@ -84,6 +92,7 @@ class ReportResponse(BaseModel):
     plan: dict | None = None
     reportMarkdown: str | None = None
     subAgentResults: list[SubAgentResultItem] = []
+    citations: list[CitationItem] = []
     totalTokens: int = 0
     createdAt: datetime | None = None
     startedAt: datetime | None = None

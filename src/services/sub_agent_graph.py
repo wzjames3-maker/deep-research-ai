@@ -182,6 +182,29 @@ async def dedup_node(state: SubAgentState, config: RunnableConfig) -> dict:
     }
 
 
+async def extract_node(state: SubAgentState, config: RunnableConfig) -> dict:
+    """Content extraction: fetch full page text from URLs via trafilatura.
+
+    Skipped when CONTENT_FETCH_ENABLED=false or when using mock LLM (tests).
+    On failure, gracefully falls back to original snippet.
+    """
+    # Skip for tests (mock LLM) or when feature is disabled
+    if _llm_service_override is not None or not settings.CONTENT_FETCH_ENABLED:
+        return {}
+
+    search_results: list[SearchResult] = state.get("search_results", [])
+    if not search_results:
+        return {}
+
+    try:
+        from src.services.content_extractor import extract_urls
+        await extract_urls(search_results)
+    except Exception as e:
+        logger.warning("extract_node_failed", error=str(e), fallback="snippets_only")
+
+    return {}
+
+
 async def filter_node(state: SubAgentState, config: RunnableConfig) -> dict:
     """Relevance filter: use LLM to score and filter low-quality results.
 
@@ -242,9 +265,12 @@ async def analyze_node(state: SubAgentState, config: RunnableConfig) -> dict:
         return {"status": "failed"}
 
     search_results: list[SearchResult] = state.get("search_results", [])
-    results_text = "\n\n".join(
-        f"[{r.title}]({r.url})\n{r.snippet}" for r in search_results
-    )
+    # Prefer extracted full content over snippet for richer LLM analysis
+    parts = []
+    for r in search_results:
+        content = r.extracted_content if r.extracted_content else r.snippet
+        parts.append(f"[{r.title}]({r.url})\n{content}")
+    results_text = "\n\n".join(parts)
 
     try:
         # Use override if set (for testing), otherwise use real llm_service
@@ -391,6 +417,7 @@ def build_sub_agent_graph(
     builder.add_node("init", init_node)
     builder.add_node("search", search_node)
     builder.add_node("dedup", dedup_node)
+    builder.add_node("extract", extract_node)
     builder.add_node("filter", filter_node)
     builder.add_node("analyze", analyze_node)
     builder.add_node("complete", complete_node)
@@ -401,7 +428,8 @@ def build_sub_agent_graph(
     # Add edges
     builder.add_edge("init", "search")
     builder.add_edge("search", "dedup")
-    builder.add_edge("dedup", "filter")
+    builder.add_edge("dedup", "extract")
+    builder.add_edge("extract", "filter")
     builder.add_edge("filter", "analyze")
     builder.add_conditional_edges(
         "analyze",

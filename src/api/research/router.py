@@ -5,6 +5,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.research.schemas import (
@@ -116,6 +117,55 @@ async def get_report(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     return await service_plan.get_research_report(db, current_user, research_id)
+
+
+@router.get("/{research_id}/export/pdf")
+async def export_pdf(
+    research_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Export research report as PDF with citations."""
+    from src.errors import NotFoundError, ForbiddenError, ReportNotReadyError
+    from src.repos.research_repo import ResearchRepository
+    from src.repos.citation_repo import CitationRepository
+    from src.services.pdf_exporter import export_report_to_pdf
+
+    repo = ResearchRepository(db)
+    research = await repo.find_by_id(research_id)
+
+    if research is None:
+        raise NotFoundError("研究记录不存在")
+    if research.user_id != current_user.id:
+        raise ForbiddenError("无权访问该研究")
+    if not research.report_markdown:
+        raise ReportNotReadyError("研究报告尚未生成")
+
+    # Get citations
+    cit_repo = CitationRepository(db)
+    citations = await cit_repo.find_by_research(research.id)
+    citation_dicts = [
+        {
+            "citationNumber": c.citation_number,
+            "url": c.url,
+            "title": c.title,
+            "snippet": c.snippet,
+        }
+        for c in citations
+    ]
+
+    pdf_bytes = await export_report_to_pdf(
+        report_markdown=research.report_markdown,
+        topic=research.topic,
+        citations=citation_dicts,
+    )
+
+    filename = f"report_{research.id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{research_id}/stream")

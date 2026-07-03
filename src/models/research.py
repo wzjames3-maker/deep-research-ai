@@ -73,6 +73,10 @@ class Research(Base):
     sub_agent_results: Mapped[list["SubAgentResult"]] = relationship(
         "SubAgentResult", back_populates="research", lazy="selectin"
     )
+    citations: Mapped[list["Citation"]] = relationship(
+        "Citation", back_populates="research", lazy="selectin",
+        order_by="Citation.citation_number",
+    )
 
     @property
     def is_active(self) -> bool:
